@@ -1,0 +1,23 @@
+databases:
+  dev:
+    username: adm_futureinterns
+    password: passfutureinterns
+    host: localhost
+    port: 1433
+    instance: sidokaredev
+    database: future_interns
+    connectionTimeout: 5
+    encrypt: false
+  prod:
+    username: prod
+    password: prod
+    host: prod
+    port: 1433
+    instance: prod
+    database: prod
+    connectionTimeout: 5
+    encrypt: false
+
+authorization:
+  jwt:
+    secretKey: "sidokaredev24"
