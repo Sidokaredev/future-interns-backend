@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"future-interns-backend/internal/handlers"
+	"log"
 	"net/http"
 	"strings"
 
@@ -35,9 +36,11 @@ func AuthorizationWithBearer() gin.HandlerFunc {
 		})
 
 		if errParse != nil {
+			log.Println("ERROR PARSE \t:", errParse.Error())
 			var (
 				InvalidSignature = errors.Is(errParse, jwt.ErrTokenSignatureInvalid)
 				TokenExpired     = errors.Is(errParse, jwt.ErrTokenExpired)
+				TokenMalformed   = errors.Is(errParse, jwt.ErrTokenMalformed)
 			)
 			switch {
 			case InvalidSignature:
@@ -53,6 +56,14 @@ func AuthorizationWithBearer() gin.HandlerFunc {
 					"success": false,
 					"error":   errParse.Error(),
 					"message": "provided token was expired",
+				})
+				context.Abort()
+				return
+			case TokenMalformed:
+				context.JSON(http.StatusBadRequest, gin.H{
+					"success": false,
+					"error":   errParse.Error(),
+					"message": "invalid token value, double check your token",
 				})
 				context.Abort()
 				return

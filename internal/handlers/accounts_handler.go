@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	initializer "future-interns-backend/init"
 	"future-interns-backend/internal/models"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type AccountsHandler struct {
@@ -67,8 +69,37 @@ func GenerateToken(userId string, expires time.Duration) string {
 	return token
 }
 
+func GormErrType(err error) map[string]any {
+	var (
+		ErrDuplicatedKey        bool = errors.Is(err, gorm.ErrDuplicatedKey)
+		ErrInvalidValueOfLength bool = errors.Is(err, gorm.ErrInvalidValueOfLength)
+	)
+	switch {
+	case ErrDuplicatedKey:
+		return map[string]any{
+			"success": false,
+			"error":   err.Error(),
+			"message": "The data you provided must not be the same as the data already stored.",
+		}
+	case ErrInvalidValueOfLength:
+		return map[string]any{
+			"success": false,
+			"error":   err.Error(),
+			"message": "Some data exceeds the length limit of the database column.",
+		}
+	}
+	return map[string]any{
+		"success": false,
+		"error":   err.Error(),
+		"message": "record with your provided email already exists in database.",
+	}
+}
+
 const (
-	TokenExpiration = 6 * time.Hour
+	TokenExpiration  = 6 * time.Hour
+	CandidateRoleId  = 1
+	EmployerRoleId   = 2
+	UniversityRoleId = 3
 )
 
 func (h *AccountsHandler) Auth(context *gin.Context) {
@@ -145,12 +176,27 @@ func (h *AccountsHandler) RegisterAccount(context *gin.Context) {
 		Email:    account.Email,
 		Password: <-ch_hashedPassword,
 	}
-	createUser := gormDB.Create(&user)
+	errTx := gormDB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+		identityAccess := &models.IdentityAccess{
+			UserId: user.Id,
+			RoleId: CandidateRoleId,
+			Type:   "candidate",
+		}
+		if err := tx.Create(&identityAccess).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
 	/* Error Handling Database Operation */
-	if createUser.Error != nil {
+	if errTx != nil {
 		context.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   createUser.Error.Error(),
+			"error":   errTx.Error(),
+			"message": "database operation failed",
 		})
 		return
 	}
@@ -163,5 +209,36 @@ func (h *AccountsHandler) RegisterAccount(context *gin.Context) {
 			"user_id":      user.Id,
 			"access_token": token,
 		},
+	})
+}
+
+func (h *AccountsHandler) GetUser(context *gin.Context) {
+	pathParamId := context.Param("userId")
+	if pathParamId == "" {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "param (id) is required",
+			"message": "provide the user id, kids. (e.g /api/v1/getUser/[[UserId]])",
+		})
+		context.Abort()
+		return
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	m_user := models.User{Id: pathParamId}
+	if errSearchUser := gormDB.First(&m_user).Error; errSearchUser != nil {
+		message := fmt.Sprintf("user with id (%s) doesn't exist", pathParamId)
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errSearchUser.Error(),
+			"message": message,
+		})
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    m_user,
 	})
 }

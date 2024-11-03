@@ -12,14 +12,29 @@ func Migrate(target string) {
 	}
 	switch target {
 	case "basic":
-		errDrop := gormDB.Migrator().DropTable(&models.User{}, &models.Image{}, &models.Document{}, &models.Address{}, &models.Social{})
+		errDrop := gormDB.Migrator().DropTable(&models.User{}, &models.Image{}, &models.Document{}, &models.Address{}, &models.Social{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.IdentityAccess{})
 		if errDrop != nil {
 			panic(errDrop)
 		}
 
-		errMigrate := gormDB.AutoMigrate(&models.User{}, &models.Image{}, &models.Document{}, &models.Address{}, &models.Social{})
+		errJoinRolePermission := gormDB.SetupJoinTable(&models.Role{}, "Permissions", &models.RolePermission{})
+		if errJoinRolePermission != nil {
+			panic(errJoinRolePermission)
+		}
+
+		errMigrate := gormDB.AutoMigrate(&models.User{}, &models.Image{}, &models.Document{}, &models.Address{}, &models.Social{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.IdentityAccess{})
 		if errMigrate != nil {
 			panic(errMigrate)
+		}
+		roles := []models.Role{
+			{Name: "basic/candidate", Description: "A basic access as a candidate"},
+			{Name: "basic/employer", Description: "A basic access as an employer"},
+			{Name: "basic/university", Description: "A basic access as a university administrator"},
+		}
+		seedRoles := gormDB.Create(&roles)
+		if seedRoles.Error != nil {
+			log.Println(seedRoles.Error)
+			panic(seedRoles.Error)
 		}
 		log.Println("migrate --target=basic completed")
 	case "candidate":
@@ -65,7 +80,7 @@ func Migrate(target string) {
 
 		log.Println("migrate --target=employer completed")
 	case "dropAll":
-		errDrop := gormDB.Migrator().DropTable(&models.Employer{}, &models.Headquarter{}, &models.OfficeImage{}, &models.EmployerSocial{}, &models.Vacancy{}, &models.Pipeline{}, &models.Assessment{}, &models.AssessmentDocument{}, &models.AssessmentAssignee{}, &models.AssessmentAssigneeSubmission{}, &models.Interview{}, &models.Offering{})
+		errDrop := gormDB.Migrator().DropTable(&models.User{}, &models.Image{}, &models.Document{}, &models.Address{}, &models.Social{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.IdentityAccess{}, &models.Candidate{}, &models.Education{}, &models.Experience{}, &models.Skill{}, &models.CandidateSkill{}, &models.CandidateAddress{}, &models.CandidateSocial{}, &models.Employer{}, &models.Headquarter{}, &models.OfficeImage{}, &models.EmployerSocial{}, &models.Vacancy{}, &models.Pipeline{}, &models.Assessment{}, &models.AssessmentDocument{}, &models.AssessmentAssignee{}, &models.AssessmentAssigneeSubmission{}, &models.Interview{}, &models.Offering{})
 		if errDrop != nil {
 			panic(errDrop)
 		}

@@ -1,0 +1,5 @@
+{
+  "success": false,
+  "error": "operation error string",
+  "message": "error cause"
+}

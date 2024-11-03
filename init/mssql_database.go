@@ -62,7 +62,7 @@ func GormSQLServerInit() error {
 	once.Do(func() {
 		dsn := fmt.Sprintf("sqlserver://%s:%s@%s:%d?database=%s", dbconfig.Username, dbconfig.Password, dbconfig.Host, dbconfig.Port, dbconfig.Database)
 
-		gormsqldb, errDB = gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
+		gormsqldb, errDB = gorm.Open(sqlserver.Open(dsn), &gorm.Config{TranslateError: true})
 		if errDB != nil {
 			errDB = fmt.Errorf("failed to open connection to sql server database using GORM \t: %w", errDB)
 			return

@@ -18,5 +18,9 @@ func LoadRoutes(engine *gin.Engine) {
 	/* versioning api v1 */
 	apiv1 := engine.Group("/api/v1")
 	AccountsRoutes(apiv1)
+	CandidateRoutes(apiv1)
 	VacancyRoutes(apiv1)
+	ImageRoutes(apiv1)
+	RoleRoutes(apiv1)
+	PermissionRoutes(apiv1)
 }

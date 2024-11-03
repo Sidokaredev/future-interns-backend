@@ -37,6 +37,5 @@ func CreateServer(address string) {
 
 		ctx.DataFromReader(http.StatusOK, fileSize, "image/jpg", file, nil)
 	})
-
 	engine.Run(address)
 }
