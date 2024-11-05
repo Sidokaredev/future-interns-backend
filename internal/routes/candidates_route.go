@@ -21,4 +21,18 @@ func CandidateRoutes(apiv1 *gin.RouterGroup) {
 		router.Handle(MethodGet, "/unscoped", candidateHandlers.Unscoped)
 		router.Handle(MethodGet, "/unscoped/:id", candidateHandlers.UnscopedById)
 	}
+	routerAddress := router.Group("/addresses")
+	{
+		routerAddress.Handle(MethodPost, "/", candidateHandlers.StoreAddresses)
+		routerAddress.Handle(MethodPatch, "/", candidateHandlers.UpdateAddress)
+		routerAddress.Handle(MethodGet, "/:id", candidateHandlers.AddressGetById)
+		routerAddress.Handle(MethodDelete, "/:id", candidateHandlers.AddressDeleteById)
+	}
+	routerEducation := router.Group("/educations")
+	{
+		routerEducation.Handle(MethodPost, "/", candidateHandlers.StoreEducations)
+		routerEducation.Handle(MethodPatch, "/", candidateHandlers.UpdateEducation)
+		routerEducation.Handle(MethodGet, "/:id", candidateHandlers.EducationGetById)
+		routerEducation.Handle(MethodDelete, "/:id", candidateHandlers.EducationDeleteById)
+	}
 }

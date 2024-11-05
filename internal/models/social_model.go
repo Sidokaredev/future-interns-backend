@@ -3,7 +3,7 @@ package models
 import "time"
 
 type Social struct {
-	Id          uint       `gorm:"type:int;primaryKey;autoIncrement"`
+	ID          uint       `gorm:"type:int;primaryKey;autoIncrement"`
 	Name        string     `gorm:"type:nvarchar(64);not null"`
 	IconImageId int        `gorm:"type:int;not null"`
 	CreatedAt   time.Time  `gorm:"type:datetime"`

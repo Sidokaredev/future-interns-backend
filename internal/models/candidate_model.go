@@ -7,8 +7,8 @@ import (
 )
 
 type Candidate struct {
-	Id                       string         `gorm:"primaryKey;type:nvarchar(256)" json:"id"`
-	Expertise                string         `gorm:"type:nvarchar(128);not null" json:"expertise"`
+	Id                       string         `gorm:"primaryKey;type:nvarchar(256)"`
+	Expertise                string         `gorm:"type:nvarchar(128);not null"`
 	AboutMe                  string         `gorm:"type:nvarchar(512)" json:"about_me"`
 	DateOfBirth              time.Time      `gorm:"type:datetime;not null"`
 	BackgroundProfileImageId *uint          `gorm:"type:bigint"`

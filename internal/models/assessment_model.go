@@ -7,7 +7,7 @@ import (
 )
 
 type Assessment struct {
-	Id             uint           `gorm:"type:bigint;primaryKey;autoIncrement"`
+	ID             uint           `gorm:"type:bigint;primaryKey;autoIncrement"`
 	Name           string         `gorm:"type:nvarchar(128);not null"`
 	Note           string         `gorm:"type:nvarchar(max);not null"`
 	AssessmentLink string         `gorm:"type:nvarchar(max)"`

@@ -33,6 +33,52 @@ type UpdateCandidateForm struct {
 	DateOfBirth string `form:"date_of_birth"`
 }
 
+type CreateEducationJSON struct {
+	University  string     `json:"university" binding:"required"`
+	Address     string     `json:"address" binding:"required"`
+	Major       string     `json:"major" binding:"required"`
+	IsGraduated bool       `json:"is_graduated"`
+	StartAt     time.Time  `json:"start_at" binding:"required"`
+	EndAt       *time.Time `json:"end_at"`
+	GPA         float32    `json:"gpa" binding:"required"`
+}
+
+type UpdateEducationJSON struct {
+	Id          uint       `json:"id" binding:"required"`
+	University  *string    `json:"university"`
+	Address     *string    `json:"address"`
+	Major       *string    `json:"major"`
+	IsGraduated *bool      `json:"is_graduated"`
+	StartAt     *time.Time `json:"start_at"`
+	EndAt       *time.Time `json:"end_at"`
+	GPA         *float32   `json:"gpa"`
+}
+
+type CreateAddressJSON struct {
+	Street       string `json:"street" binding:"required"`
+	Neighborhood string `json:"neighborhood" binding:"required"`
+	RuralArea    string `json:"rural_area" binding:"required"`
+	SubDistrict  string `json:"sub_district" binding:"required"`
+	City         string `json:"city" binding:"required"`
+	Province     string `json:"province" binding:"required"`
+	Country      string `json:"country" binding:"required"`
+	PostalCode   int    `json:"postal_code" binding:"required"`
+	Type         string `json:"type" binding:"required"`
+}
+
+type UpdateAddressJSON struct {
+	Id           uint    `json:"id" binding:"required"`
+	Street       *string `json:"street"`
+	Neighborhood *string `json:"neighborhood"`
+	RuralArea    *string `json:"rural_area"`
+	SubDistrict  *string `json:"sub_district"`
+	City         *string `json:"city"`
+	Province     *string `json:"province"`
+	Country      *string `json:"country"`
+	PostalCode   *int    `json:"postal_code"`
+	Type         *string `json:"type"`
+}
+
 type ChannelImage struct {
 	Key     string
 	Status  string
@@ -43,19 +89,6 @@ type ChannelDocument struct {
 	Key        string
 	Status     string
 	DocumentId uint
-}
-
-type CandidateById struct {
-	Id                       string
-	Expertise                string
-	AboutMe                  string
-	DateOfBirth              time.Time
-	BackgroundProfileImageId uint
-	ProfileImageId           uint
-	CVDocumentId             uint
-	UserId                   string
-	User                     *models.User `gorm:"foreignKey:UserId"`
-	Educations               []*models.Education
 }
 
 /* helpers */
@@ -89,10 +122,11 @@ func StoreImage(imageFor string, image *multipart.FileHeader, ch_storeImageStatu
 
 	gormDB, _ := initializer.GetGorm()
 	m_image := &models.Image{
-		Name:     image.Filename,
-		MimeType: http.DetectContentType(imageInByte),
-		Size:     image.Size,
-		Blob:     imageInByte,
+		Name:      image.Filename,
+		MimeType:  http.DetectContentType(imageInByte),
+		Size:      image.Size,
+		Blob:      imageInByte,
+		CreatedAt: time.Now(),
 	}
 
 	if errStoreImage := gormDB.Create(&m_image).Error; errStoreImage != nil {
@@ -144,8 +178,18 @@ func UpdateImage(imageId uint, imageFor string, image *multipart.FileHeader, ch_
 	}
 
 	gormDB, _ := initializer.GetGorm()
-	m_image := &models.Image{}
-	updateImageFields := gormDB.Model(&m_image).Where("id = ?", imageId).Updates(models.Image{Name: image.Filename, Size: image.Size, Blob: imageBinaryData})
+	m_image := &models.Image{
+		ID: imageId,
+	}
+	updatedTime := time.Now()
+	updateImageFields := gormDB.Model(&m_image).
+		Updates(models.Image{
+			Name:      image.Filename,
+			Size:      image.Size,
+			MimeType:  http.DetectContentType(imageBinaryData),
+			Blob:      imageBinaryData,
+			UpdatedAt: &updatedTime,
+		})
 
 	if updateImageFields.Error != nil {
 		data := ChannelImage{
@@ -196,11 +240,12 @@ func StoreDocument(documentFor string, purpose string, document *multipart.FileH
 
 	gormDB, _ := initializer.GetGorm()
 	m_document := &models.Document{
-		Purpose:  purpose,
-		Name:     document.Filename,
-		MimeType: http.DetectContentType(docBinaryData),
-		Size:     document.Size,
-		Blob:     docBinaryData,
+		Purpose:   purpose,
+		Name:      document.Filename,
+		MimeType:  http.DetectContentType(docBinaryData),
+		Size:      document.Size,
+		Blob:      docBinaryData,
+		CreatedAt: time.Now(),
 	}
 	errStoreDocument := gormDB.Create(&m_document).Error
 
@@ -253,15 +298,16 @@ func UpdateDocument(documentId uint, documentFor string, purpose string, documen
 
 	gormDB, _ := initializer.GetGorm()
 	m_document := models.Document{
-		Model: gorm.Model{ID: documentId},
+		ID: documentId,
 	}
-
+	updatedTime := time.Now()
 	errUpdateDocument := gormDB.Model(&m_document).
 		Updates(models.Document{
-			Name:     document.Filename,
-			MimeType: http.DetectContentType(documentBinaryData),
-			Size:     document.Size,
-			Blob:     documentBinaryData}).
+			Name:      document.Filename,
+			MimeType:  http.DetectContentType(documentBinaryData),
+			Size:      document.Size,
+			Blob:      documentBinaryData,
+			UpdatedAt: &updatedTime}).
 		Error
 
 	if errUpdateDocument != nil {
@@ -635,6 +681,7 @@ func (c *CandidatesHandler) Get(context *gin.Context) {
 
 	for _, candidate := range candidates {
 		candidateMap := map[string]interface{}{
+			"id":                          candidate.Id,
 			"expertise":                   candidate.Expertise,
 			"about_me":                    candidate.AboutMe,
 			"date_of_birth":               candidate.DateOfBirth,
@@ -661,6 +708,7 @@ func (c *CandidatesHandler) Get(context *gin.Context) {
 		if strings.Contains(queries, "address") {
 			if len(candidate.Addresses) != 0 {
 				addressMap := map[string]interface{}{
+					"id":           candidate.Addresses[0].ID,
 					"street":       candidate.Addresses[0].Street,
 					"neighborhood": candidate.Addresses[0].Neighborhood,
 					"rural_area":   candidate.Addresses[0].RuralArea,
@@ -682,6 +730,7 @@ func (c *CandidatesHandler) Get(context *gin.Context) {
 				for _, skill := range candidate.Skills {
 
 					skillsMap = append(skillsMap, map[string]interface{}{
+						"id":                    skill.ID,
 						"name":                  skill.Name,
 						"skill_icon_image_path": fmt.Sprintf("/api/v1/images/%d", skill.SkillIconImageId),
 					})
@@ -698,6 +747,7 @@ func (c *CandidatesHandler) Get(context *gin.Context) {
 				educationsMap := []map[string]interface{}{}
 				for _, education := range candidate.Educations {
 					educationsMap = append(educationsMap, map[string]interface{}{
+						"id":           education.ID,
 						"university":   education.University,
 						"major":        education.Major,
 						"address":      education.Address,
@@ -719,6 +769,7 @@ func (c *CandidatesHandler) Get(context *gin.Context) {
 				experiencesMap := []map[string]interface{}{}
 				for _, experience := range candidate.Experiences {
 					experiencesMap = append(experiencesMap, map[string]interface{}{
+						"id":                     experience.ID,
 						"company_name":           experience.CompanyName,
 						"position":               experience.Position,
 						"location_address":       experience.LocationAddress,
@@ -748,6 +799,7 @@ func (c *CandidatesHandler) Get(context *gin.Context) {
 				for _, candidateSocial := range candidate.CandidateSocials {
 					icon_image_id := uint(candidateSocial.Social.IconImageId)
 					socialsMap = append(socialsMap, map[string]interface{}{
+						"id":              candidateSocial.Social.ID,
 						"name":            candidateSocial.Social.Name,
 						"url":             candidateSocial.Url,
 						"icon_image_path": fmt.Sprintf("/api/v1/images/%v", SafelyNilPointer(&icon_image_id)),
@@ -770,176 +822,183 @@ func (c *CandidatesHandler) Get(context *gin.Context) {
 }
 
 func (c *CandidatesHandler) GetById(context *gin.Context) {
-	candidateId := context.Param("id")
-	querys, _ := context.GetQuery("includes")
+	queries, _ := context.GetQuery("includes")
 
-	if candidateId == "" {
-		context.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "missing parameter :id",
-			"message": "parameter :id not specified (e.g /candidates/:your_candidate_id)",
-		})
+	param_candidateId := context.Param("id")
 
-		context.Abort()
-		return
-	}
+	var candidate map[string]interface{}
+	m_candidate := models.Candidate{}
 
 	gormDB, _ := initializer.GetGorm()
-	candidate := make(map[string]interface{})
-	var (
-		user        map[string]interface{}
-		address     map[string]interface{}
-		skills      []map[string]interface{}
-		educations  []map[string]interface{}
-		experiences []map[string]interface{}
-		socials     []map[string]interface{}
-	)
-	errGetCandidate := gormDB.Transaction(func(tx *gorm.DB) error {
-		getCandidate := tx.Model(&models.Candidate{}).Where("id = ?", candidateId).Scan(&candidate)
+	errCandidate := gormDB.Transaction(func(tx *gorm.DB) error {
+		getCandidate := tx.Model(&models.Candidate{})
+		if strings.Contains(queries, "user") {
+			getCandidate = getCandidate.Preload("User")
+		}
+		if strings.Contains(queries, "address") {
+			getCandidate = getCandidate.Preload("Addresses", func(db *gorm.DB) *gorm.DB {
+				return db.Where("type = ?", "home").Limit(1).Order("created_at DESC")
+			})
+		}
+		if strings.Contains(queries, "skills") {
+			getCandidate = getCandidate.Preload("Skills")
+		}
+		if strings.Contains(queries, "educations") {
+			getCandidate = getCandidate.Preload("Educations")
+		}
+		if strings.Contains(queries, "experiences") {
+			getCandidate = getCandidate.Preload("Experiences")
+		}
+		if strings.Contains(queries, "socials") {
+			getCandidate = getCandidate.Preload("CandidateSocials.Social")
+		}
+
+		getCandidate = getCandidate.Model(&models.Candidate{}).Where("id = ?", param_candidateId).First(&m_candidate)
+
 		if getCandidate.Error != nil {
 			return getCandidate.Error
 		} else if getCandidate.RowsAffected == 0 {
-			return fmt.Errorf(fmt.Sprintf("not found candidate with id (%s)", candidateId))
-		}
-
-		TransformsIdToPath([]string{
-			"background_profile_image_id",
-			"profile_image_id",
-			"cv_document_id",
-		}, candidate)
-
-		if strings.Contains(querys, "user") {
-			errUser := tx.Model(&models.User{}).Where("id = ?", candidate["user_id"]).First(&user).Error
-			if errUser != nil {
-				return errUser
-			}
-			candidate["user"] = &user
-		}
-
-		if strings.Contains(querys, "address") {
-			errAddress := tx.Model(&models.CandidateAddress{}).
-				Select([]string{
-					"addresses.street",
-					"addresses.neighborhood",
-					"addresses.rural_area",
-					"addresses.sub_district",
-					"addresses.city",
-					"addresses.province",
-					"addresses.country",
-				}).
-				Joins("inner join addresses on candidate_addresses.address_id = addresses.id").
-				Where("candidate_addresses.candidate_id = ? AND addresses.type = ?", candidateId, "home").
-				Limit(1).
-				Find(&address).Error
-
-			if errAddress != nil {
-				return errAddress
-			}
-
-			candidate["address"] = &address
-		}
-
-		if strings.Contains(querys, "skills") {
-			errSkills := tx.Model(&models.CandidateSkill{}).
-				Select([]string{
-					"skills.name",
-					"skills.skill_icon_image_id",
-				}).
-				Joins("INNER JOIN skills ON candidate_skills.skill_id = skills.id").
-				Where("candidate_skills.candidate_id = ?", candidateId).
-				Find(&skills).Error
-
-			if errSkills != nil {
-				return errSkills
-			}
-
-			TransformsIdToPath([]string{
-				"skill_icon_image_id",
-			}, skills)
-
-			candidate["skills"] = &skills
-		}
-
-		if strings.Contains(querys, "educations") {
-			errEducations := tx.Model(&models.Education{}).Select("id", "university", "major", "gpa", "address").Where("candidate_id = ?", candidateId).Scan(&educations).Error
-			if errEducations != nil {
-				return errEducations
-			}
-
-			for _, education := range educations {
-				if value, exists := education["gpa"].([]byte); exists {
-					gpa, errParseFloat := strconv.ParseFloat(string(value), 64)
-					if errParseFloat != nil {
-						return errParseFloat
-					}
-					education["gpa"] = gpa
-				}
-			}
-
-			candidate["educations"] = &educations
-		}
-
-		if strings.Contains(querys, "experiences") {
-			errExperiences := tx.Model(&models.Experience{}).
-				Select([]string{
-					"company_name",
-					"position",
-					"type",
-					"location_address",
-					"start_at",
-					"end_at",
-					"description",
-					"attachment_document_id",
-				}).
-				Where("candidate_id = ?", candidateId).
-				Find(&experiences).Error
-
-			if errExperiences != nil {
-				return errExperiences
-			}
-
-			TransformsIdToPath([]string{
-				"attachment_document_id",
-			}, experiences)
-
-			candidate["experiences"] = &experiences
-		}
-
-		if strings.Contains(querys, "socials") {
-			errSocials := tx.Model(&models.CandidateSocial{}).
-				Select([]string{
-					"candidate_socials.url",
-					"socials.name",
-					"socials.icon_image_id",
-				}).
-				Joins("INNER JOIN socials ON candidate_socials.social_id = socials.id").
-				Where("candidate_id = ?", candidateId).
-				Find(&socials).Error
-
-			if errSocials != nil {
-				return errSocials
-			}
-
-			TransformsIdToPath([]string{
-				"icon_image_id",
-			}, socials)
-
-			candidate["socials"] = &socials
+			return fmt.Errorf("no candidate record, %d rows affected", getCandidate.RowsAffected)
 		}
 
 		return nil
 	})
 
-	if errGetCandidate != nil {
-		message := fmt.Sprintf("database error, failed getting candidate by id (%s)", candidateId)
-		context.JSON(http.StatusInternalServerError, gin.H{
+	if errCandidate != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   errGetCandidate.Error(),
-			"message": message,
+			"error":   errCandidate.Error(),
+			"message": fmt.Sprintf("failed getting candidate with id (%v)", param_candidateId),
 		})
 
 		context.Abort()
 		return
+	}
+	// WAIT
+	candidate = map[string]interface{}{
+		"expertise":                   m_candidate.Expertise,
+		"about_me":                    m_candidate.AboutMe,
+		"date_of_birth":               m_candidate.DateOfBirth,
+		"background_profile_image_id": SafelyNilPointer(m_candidate.BackgroundProfileImageId),
+		"profile_image_id":            SafelyNilPointer(m_candidate.ProfileImageId),
+		"cv_document_id":              SafelyNilPointer(m_candidate.CVDocumentId),
+	}
+
+	TransformsIdToPath([]string{
+		"background_profile_image_id",
+		"profile_image_id",
+		"cv_document_id",
+	}, candidate)
+
+	if strings.Contains(queries, "user") {
+		userMap := map[string]interface{}{
+			"id":       m_candidate.User.Id,
+			"fullname": m_candidate.User.Fullname,
+			"email":    m_candidate.User.Email,
+		}
+
+		candidate["user"] = userMap
+	}
+	if strings.Contains(queries, "address") {
+		if len(m_candidate.Addresses) != 0 {
+			addressMap := map[string]interface{}{
+				"street":       m_candidate.Addresses[0].Street,
+				"neighborhood": m_candidate.Addresses[0].Neighborhood,
+				"rural_area":   m_candidate.Addresses[0].RuralArea,
+				"sub_district": m_candidate.Addresses[0].SubDistrict,
+				"city":         m_candidate.Addresses[0].City,
+				"province":     m_candidate.Addresses[0].Province,
+				"country":      m_candidate.Addresses[0].Country,
+			}
+
+			candidate["address"] = addressMap
+		} else {
+			candidate["address"] = nil
+		}
+	}
+
+	if strings.Contains(queries, "skills") {
+		if len(m_candidate.Skills) != 0 {
+			skillsMap := []map[string]interface{}{}
+			for _, skill := range m_candidate.Skills {
+
+				skillsMap = append(skillsMap, map[string]interface{}{
+					"name":                  skill.Name,
+					"skill_icon_image_path": fmt.Sprintf("/api/v1/images/%d", skill.SkillIconImageId),
+				})
+			}
+
+			candidate["skills"] = skillsMap
+		} else {
+			candidate["skills"] = nil
+		}
+	}
+
+	if strings.Contains(queries, "educations") {
+		if len(m_candidate.Educations) != 0 {
+			educationsMap := []map[string]interface{}{}
+			for _, education := range m_candidate.Educations {
+				educationsMap = append(educationsMap, map[string]interface{}{
+					"university":   education.University,
+					"major":        education.Major,
+					"address":      education.Address,
+					"is_graduated": education.IsGraduated,
+					"start_at":     education.StartAt,
+					"end_at":       education.EndAt,
+					"gpa":          education.GPA,
+				})
+			}
+
+			candidate["educations"] = educationsMap
+		} else {
+			candidate["educations"] = nil
+		}
+	}
+
+	if strings.Contains(queries, "experiences") {
+		if len(m_candidate.Experiences) != 0 {
+			experiencesMap := []map[string]interface{}{}
+			for _, experience := range m_candidate.Experiences {
+				experiencesMap = append(experiencesMap, map[string]interface{}{
+					"company_name":           experience.CompanyName,
+					"position":               experience.Position,
+					"location_address":       experience.LocationAddress,
+					"type":                   experience.Type,
+					"is_current":             experience.IsCurrent,
+					"start_at":               experience.StartAt,
+					"end_at":                 experience.EndAt,
+					"description":            experience.Description,
+					"attachment_document_id": SafelyNilPointer(&experience.AttachmentDocumentId),
+				})
+
+			}
+
+			TransformsIdToPath([]string{
+				"attachment_document_id",
+			}, experiencesMap)
+
+			candidate["experiences"] = experiencesMap
+		} else {
+			candidate["experiences"] = nil
+		}
+	}
+
+	if strings.Contains(queries, "socials") {
+		if len(m_candidate.CandidateSocials) != 0 {
+			socialsMap := []map[string]interface{}{}
+			for _, candidateSocial := range m_candidate.CandidateSocials {
+				icon_image_id := uint(candidateSocial.Social.IconImageId)
+				socialsMap = append(socialsMap, map[string]interface{}{
+					"name":            candidateSocial.Social.Name,
+					"url":             candidateSocial.Url,
+					"icon_image_path": fmt.Sprintf("/api/v1/images/%v", SafelyNilPointer(&icon_image_id)),
+				})
+			}
+
+			candidate["socials"] = socialsMap
+		} else {
+			candidate["socials"] = nil
+		}
 	}
 
 	context.JSON(http.StatusOK, gin.H{
@@ -967,14 +1026,14 @@ func (c *CandidatesHandler) DeleteById(context *gin.Context) {
 	gormDB, _ := initializer.GetGorm()
 
 	errDeleting := gormDB.Transaction(func(tx *gorm.DB) error {
-		errDeleteCandidate := tx.Delete(&models.Candidate{}, "id = ?", candidateId).Error
-		if errDeleteCandidate != nil {
-			return errDeleteCandidate
+		deleteCandidateRowAffected := tx.Delete(&models.Candidate{}, "id = ?", candidateId).RowsAffected
+		if deleteCandidateRowAffected == 0 {
+			return fmt.Errorf("failed deleting candidate with id (%s)", candidateId)
 		}
 
-		errDeleteUser := tx.Delete(&models.User{}, "id = ?", tokenClaims.Id).Error
-		if errDeleteUser != nil {
-			return errDeleteUser
+		deleteUserRowAffected := tx.Delete(&models.User{}, "id = ?", tokenClaims.Id).RowsAffected
+		if deleteUserRowAffected == 0 {
+			return fmt.Errorf("failed deleting user with id (%s)", tokenClaims.Id)
 		}
 		return nil
 	})
@@ -983,7 +1042,7 @@ func (c *CandidatesHandler) DeleteById(context *gin.Context) {
 		context.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   errDeleting.Error(),
-			"message": fmt.Sprintf("failed deleting candidate with id (%s)", candidateId),
+			"message": "be carefull, this request directed to /api/v1/candidates/:id. check your url path and specify the :id param",
 		})
 
 		context.Abort()
@@ -1188,16 +1247,6 @@ func (c *CandidatesHandler) UnscopedById(context *gin.Context) {
 	queries, _ := context.GetQuery("includes")
 
 	param_candidateId := context.Param("id")
-	// if param_candidateId == "" {
-	// 	context.JSON(http.StatusBadRequest, gin.H{
-	// 		"success": false,
-	// 		"error":   "candidate :id param required",
-	// 		"message": "specify you candidate :id as url param, kids. (e.g /api/v1/candidates/unscoped/:your_candidate_id)",
-	// 	})
-
-	// 	context.Abort()
-	// 	return
-	// }
 
 	var unscoped_candidate map[string]interface{}
 	m_unscoped_candidate := models.Candidate{}
@@ -1378,5 +1427,376 @@ func (c *CandidatesHandler) UnscopedById(context *gin.Context) {
 		"success": true,
 		"data":    unscoped_candidate,
 	})
-	// like Get y Id Hanlder, but with .Unscoped() method
+}
+
+func (c *CandidatesHandler) StoreAddresses(context *gin.Context) {
+	addressesJSON := []CreateAddressJSON{}
+	if errBind := context.ShouldBindJSON(&addressesJSON); errBind != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "double check your JSON fields, kids",
+		})
+
+		context.Abort()
+		return
+	}
+
+	addressesData := []models.Address{}
+	for _, address := range addressesJSON {
+		addressesData = append(addressesData, models.Address{
+			Street:       address.Street,
+			Neighborhood: address.Neighborhood,
+			RuralArea:    address.RuralArea,
+			SubDistrict:  address.SubDistrict,
+			City:         address.City,
+			Province:     address.Province,
+			Country:      address.Country,
+			PostalCode:   address.PostalCode,
+			Type:         address.Type,
+		})
+	}
+
+	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
+	tokenClaims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	errStoreAddresses := gormDB.Transaction(func(tx *gorm.DB) error {
+		m_candidate := models.Candidate{}
+		errGetCandidate := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", tokenClaims.Id).First(&m_candidate).Error
+		if errGetCandidate != nil {
+			return errGetCandidate
+		}
+
+		errStoreAddress := tx.Create(addressesData).Error
+		if errStoreAddress != nil {
+			return errStoreAddress
+		}
+
+		m_candidate_address := []models.CandidateAddress{}
+		for _, address := range addressesData {
+			m_candidate_address = append(m_candidate_address, models.CandidateAddress{
+				CandidateId: m_candidate.Id,
+				AddressId:   address.ID,
+				CreatedAt:   time.Now(),
+			})
+		}
+
+		storeCandidateAddress := tx.Create(&m_candidate_address)
+		if storeCandidateAddress.Error != nil {
+			return storeCandidateAddress.Error
+		}
+
+		return nil
+	})
+
+	if errStoreAddresses != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errStoreAddresses.Error(),
+			"message": "failed storing candidate addresses",
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("%v candidate address stored successfully", len(addressesData)),
+	})
+}
+
+func (c *CandidatesHandler) UpdateAddress(context *gin.Context) {
+	updateAddressJSON := UpdateAddressJSON{}
+	if errBind := context.ShouldBindJSON(&updateAddressJSON); errBind != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "double check your JSON fields, kids",
+		})
+
+		context.Abort()
+		return
+	}
+
+	addressFields := map[string]interface{}{}
+	v := reflect.ValueOf(updateAddressJSON)
+
+	for i := 0; i < v.NumField(); i++ {
+		keyName := v.Type().Field(i).Tag.Get("json")
+		value := v.Field(i)
+
+		if value.Kind() == reflect.Pointer && !value.IsNil() {
+			addressFields[keyName] = value.Elem().Interface()
+		}
+	}
+
+	addressFields["updated_at"] = time.Now()
+
+	gormDB, _ := initializer.GetGorm()
+	updateAddress := gormDB.Model(&models.Address{ID: updateAddressJSON.Id}).Updates(addressFields)
+	if updateAddress.RowsAffected == 0 {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("couldn't update address with id (%v) or record not found", updateAddressJSON.Id),
+			"message": fmt.Sprintf("failed updating address with id (%v)", updateAddressJSON.Id),
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("%v address updated successfully", updateAddress.RowsAffected),
+	})
+}
+
+func (c *CandidatesHandler) AddressGetById(context *gin.Context) {
+	param_addressId, _ := strconv.ParseUint(context.Param("id"), 10, 64)
+
+	gormDB, _ := initializer.GetGorm()
+	address := map[string]interface{}{}
+	errGetAddress := gormDB.Model(&models.Address{}).Select([]string{
+		"id",
+		"street",
+		"neighborhood",
+		"rural_area",
+		"sub_district",
+		"city",
+		"province",
+		"country",
+		"postal_code",
+		"type",
+	}).
+		Where("id = ?", uint(param_addressId)).
+		First(&address).Error
+
+	if errGetAddress != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errGetAddress.Error(),
+			"message": fmt.Sprintf("failed getting address with id (%v)", param_addressId),
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    address,
+	})
+}
+
+func (c *CandidatesHandler) AddressDeleteById(context *gin.Context) {
+	param_addressId, _ := strconv.ParseUint(context.Param("id"), 10, 32)
+
+	gormDB, _ := initializer.GetGorm()
+
+	deleteAddress := gormDB.Transaction(func(tx *gorm.DB) error {
+		m_candidateAddress := models.CandidateAddress{}
+		deleteCandidateAddress := tx.Model(&models.CandidateAddress{}).Where("address_id = ?", param_addressId).Delete(&m_candidateAddress)
+		if deleteCandidateAddress.RowsAffected == 0 {
+			return fmt.Errorf("couldn't delete candidate_address with id (%v)", param_addressId)
+		}
+
+		m_address := models.Address{ID: uint(param_addressId)}
+		deleteAddress := tx.Delete(&m_address)
+		if deleteAddress.RowsAffected == 0 {
+			return fmt.Errorf("couldn't delete address with id (%v)", param_addressId)
+		}
+
+		return nil
+	})
+
+	if deleteAddress != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "couldn't delete address or record not found",
+			"message": fmt.Sprintf("failed deleting address with id (%v)", param_addressId),
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("address with id (%v) deleted successfully", param_addressId),
+	})
+}
+
+func (c *CandidatesHandler) StoreEducations(context *gin.Context) {
+	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
+	tokenClaims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	m_candidate := map[string]interface{}{}
+	getCandidateId := gormDB.Model(&models.Candidate{}).Select("id").Where("user_id = ?", tokenClaims.Id).First(&m_candidate)
+
+	if getCandidateId.Error != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   getCandidateId.Error.Error(),
+			"message": "failed getting candidate id by user_id",
+		})
+
+		context.Abort()
+		return
+	}
+
+	education_data := []models.Education{}
+	educationsJSON := []CreateEducationJSON{}
+	if errBind := context.ShouldBindJSON(&educationsJSON); errBind != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "double check your JSON fields, kids",
+		})
+
+		context.Abort()
+		return
+	}
+
+	for _, education := range educationsJSON {
+		education_data = append(education_data, models.Education{
+			University:  education.University,
+			Address:     education.Address,
+			Major:       education.Major,
+			IsGraduated: education.IsGraduated,
+			StartAt:     education.StartAt,
+			EndAt:       education.EndAt,
+			GPA:         education.GPA,
+			CandidateId: m_candidate["id"].(string),
+			CreatedAt:   time.Now(),
+		})
+	}
+
+	storeEducations := gormDB.Model(&models.Education{}).Create(education_data)
+	if storeEducations.Error != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   storeEducations.Error.Error(),
+			"message": "failed storing educations data",
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("%v educations stored successfully", storeEducations.RowsAffected),
+	})
+}
+
+func (c *CandidatesHandler) UpdateEducation(context *gin.Context) {
+	educationJSON := UpdateEducationJSON{}
+	if errBind := context.ShouldBindJSON(&educationJSON); errBind != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "double check your JSON fields, kids",
+		})
+
+		context.Abort()
+		return
+	}
+
+	educationFields := map[string]interface{}{}
+	v := reflect.ValueOf(educationJSON)
+
+	for i := 0; i < v.NumField(); i++ {
+		value := v.Field(i)
+		jsonTag := v.Type().Field(i).Tag.Get("json")
+
+		if jsonTag == "" {
+			continue
+		}
+
+		if value.Kind() == reflect.Ptr {
+			if !value.IsNil() {
+				educationFields[jsonTag] = value.Elem().Interface()
+			}
+		}
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	updateEducation := gormDB.Model(&models.Education{ID: educationJSON.Id}).Updates(educationFields)
+	if updateEducation.Error != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   updateEducation.Error.Error(),
+			"message": fmt.Sprintf("failed updating education with id (%v)", educationJSON.Id),
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success":        true,
+		"data":           fmt.Sprintf("%v education updated successfully", updateEducation.RowsAffected),
+		"updated_fields": educationFields,
+	})
+}
+
+func (c *CandidatesHandler) EducationGetById(context *gin.Context) {
+	param_educationId := context.Param("id")
+
+	m_education := map[string]interface{}{}
+	gormDB, _ := initializer.GetGorm()
+	errGetEducation := gormDB.Model(&models.Education{}).
+		Select([]string{
+			"university",
+			"address",
+			"major",
+			"is_graduated",
+			"start_at",
+			"end_at",
+			"gpa",
+		}).Where("id = ?", param_educationId).
+		First(&m_education).Error
+
+	if errGetEducation != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errGetEducation.Error(),
+			"message": fmt.Sprintf("failed getting education with id (%v)", param_educationId),
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    m_education,
+	})
+}
+
+func (c *CandidatesHandler) EducationDeleteById(context *gin.Context) {
+	gormDB, _ := initializer.GetGorm()
+	educationId, _ := strconv.ParseUint(context.Param("id"), 10, 64)
+	m_education := models.Education{
+		ID: uint(educationId),
+	}
+	deleteEducation := gormDB.Delete(&m_education)
+	if deleteEducation.RowsAffected == 0 {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("education with ID %v maybe not found", educationId),
+			"message": fmt.Sprintf("failed deleting education with id (%v)", educationId),
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("%v education deleted successfully", deleteEducation.RowsAffected),
+	})
 }
