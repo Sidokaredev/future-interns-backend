@@ -10,9 +10,9 @@ type Experience struct {
 	LocationAddress      string     `gorm:"type:nvarchar(256);not null"`
 	IsCurrent            bool       `gorm:"type:bit;not null"`
 	StartAt              time.Time  `gorm:"type:datetime;not null"`
-	EndAt                time.Time  `gorm:"type:datetime"`
+	EndAt                *time.Time `gorm:"type:datetime"`
 	Description          string     `gorm:"type:nvarchar(max)"`
-	AttachmentDocumentId uint       `gorm:"type:bigint"`
+	AttachmentDocumentId *uint      `gorm:"type:bigint"`
 	CandidateId          string     `gorm:"type:nvarchar(256);not null"`
 	CreatedAt            time.Time  `gorm:"type:datetime;not null"`
 	UpdatedAt            *time.Time `gorm:"type:datetime"`

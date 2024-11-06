@@ -79,6 +79,29 @@ type UpdateAddressJSON struct {
 	Type         *string `json:"type"`
 }
 
+type CreateExperienceForm struct {
+	CompanyName     string     `form:"company_name" binding:"required"`
+	Position        string     `form:"position" binding:"required"`
+	Type            string     `form:"type" binding:"required"`
+	LocationAddress string     `form:"location_address" binding:"required"`
+	IsCurrent       bool       `form:"is_current"`
+	StartAt         time.Time  `form:"start_at" binding:"required"`
+	EndAt           *time.Time `form:"end_at"`
+	Description     string     `form:"description" binding:"required"`
+}
+
+type UpdateExperienceForm struct {
+	Id              uint       `form:"id" binding:"required"`
+	CompanyName     *string    `form:"company_name"`
+	Position        *string    `form:"position"`
+	Type            *string    `form:"type"`
+	LocationAddress *string    `form:"location_address"`
+	IsCurrent       *bool      `form:"is_current"`
+	StartAt         *time.Time `form:"start_at"`
+	EndAt           *time.Time `form:"end_at"`
+	Description     *string    `form:"description"`
+}
+
 type ChannelImage struct {
 	Key     string
 	Status  string
@@ -567,21 +590,37 @@ func (c *CandidatesHandler) Update(context *gin.Context) {
 	cvDocument, errCVDocument := context.FormFile("cv_document")
 
 	if errBackground == nil {
-		go UpdateImage(*m_candidate.BackgroundProfileImageId, "background_profile_img", backgroundProfileImg, ch_updateImageStatus)
+		// check if background_profile_image_id null, go Store instead
+		if m_candidate.BackgroundProfileImageId == nil {
+			go StoreImage("background_profile_img", backgroundProfileImg, ch_updateImageStatus)
+		} else {
+			go UpdateImage(*m_candidate.BackgroundProfileImageId, "background_profile_img", backgroundProfileImg, ch_updateImageStatus)
+		}
 	} else {
 		background_profile_img_status = errBackground.Error()
 		updateImageCounter -= 1
 	}
 
 	if errProfile == nil {
-		go UpdateImage(*m_candidate.ProfileImageId, "profile_img", profileImg, ch_updateImageStatus)
+		if m_candidate.ProfileImageId == nil {
+			go StoreImage("profile_img", profileImg, ch_updateImageStatus)
+		} else {
+			go UpdateImage(*m_candidate.ProfileImageId, "profile_img", profileImg, ch_updateImageStatus)
+		}
 	} else {
 		profile_image_status = errProfile.Error()
 		updateImageCounter -= 1
 	}
 
 	if errCVDocument == nil {
-		go UpdateDocument(*m_candidate.CVDocumentId, "cv_document", "curriculum_vitae", cvDocument, ch_updateDocumentStatus)
+		if m_candidate.CVDocumentId == nil {
+			go StoreDocument("cv_document", "curriculum_vitae", cvDocument, ch_updateDocumentStatus)
+		} else {
+			go UpdateDocument(*m_candidate.CVDocumentId, "cv_document", "curriculum_vitae", cvDocument, ch_updateDocumentStatus)
+		}
+	} else {
+		cv_document_status = errCVDocument.Error()
+		close(ch_updateDocumentStatus)
 	}
 
 	for i := 0; i < updateImageCounter; i++ {
@@ -590,14 +629,22 @@ func (c *CandidatesHandler) Update(context *gin.Context) {
 		switch data.Key {
 		case "background_profile_img":
 			background_profile_img_status = data.Status
-
+			if m_candidate.BackgroundProfileImageId == nil {
+				mapCandidateFields["background_profile_image_id"] = data.ImageId
+			}
 		case "profile_img":
 			profile_image_status = data.Status
+			if m_candidate.ProfileImageId == nil {
+				mapCandidateFields["profile_image_id"] = data.ImageId
+			}
 		}
 	}
 
 	if ch_data, ok := <-ch_updateDocumentStatus; ok {
 		cv_document_status = ch_data.Status
+		if m_candidate.CVDocumentId == nil {
+			mapCandidateFields["cv_document_id"] = ch_data.DocumentId
+		}
 	}
 	//  storing candidate field prop
 	var updated_status string
@@ -778,7 +825,7 @@ func (c *CandidatesHandler) Get(context *gin.Context) {
 						"start_at":               experience.StartAt,
 						"end_at":                 experience.EndAt,
 						"description":            experience.Description,
-						"attachment_document_id": SafelyNilPointer(&experience.AttachmentDocumentId),
+						"attachment_document_id": SafelyNilPointer(experience.AttachmentDocumentId),
 					})
 
 				}
@@ -968,7 +1015,7 @@ func (c *CandidatesHandler) GetById(context *gin.Context) {
 					"start_at":               experience.StartAt,
 					"end_at":                 experience.EndAt,
 					"description":            experience.Description,
-					"attachment_document_id": SafelyNilPointer(&experience.AttachmentDocumentId),
+					"attachment_document_id": SafelyNilPointer(experience.AttachmentDocumentId),
 				})
 
 			}
@@ -1201,7 +1248,7 @@ func (c *CandidatesHandler) Unscoped(context *gin.Context) {
 						"start_at":               experience.StartAt,
 						"end_at":                 experience.EndAt,
 						"description":            experience.Description,
-						"attachment_document_id": SafelyNilPointer(&experience.AttachmentDocumentId),
+						"attachment_document_id": SafelyNilPointer(experience.AttachmentDocumentId),
 					})
 
 				}
@@ -1390,7 +1437,7 @@ func (c *CandidatesHandler) UnscopedById(context *gin.Context) {
 					"start_at":               experience.StartAt,
 					"end_at":                 experience.EndAt,
 					"description":            experience.Description,
-					"attachment_document_id": SafelyNilPointer(&experience.AttachmentDocumentId),
+					"attachment_document_id": SafelyNilPointer(experience.AttachmentDocumentId),
 				})
 
 			}
@@ -1798,5 +1845,280 @@ func (c *CandidatesHandler) EducationDeleteById(context *gin.Context) {
 	context.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    fmt.Sprintf("%v education deleted successfully", deleteEducation.RowsAffected),
+	})
+}
+
+func (c *CandidatesHandler) StoreExperience(context *gin.Context) {
+	experienceForm := CreateExperienceForm{}
+	if errBind := context.ShouldBind(&experienceForm); errBind != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": true,
+			"error":   errBind.Error(),
+			"message": "double check your form-data fields, kids",
+		})
+
+		context.Abort()
+		return
+	}
+
+	ch_storeDocument := make(chan ChannelDocument, 1)
+	var store_document_status string
+	DOCUMENT_COUNT := 1
+	attachmentDocument, errDocument := context.FormFile("attachment_document")
+	if errDocument == nil {
+		go StoreDocument("attachment_document", "experience", attachmentDocument, ch_storeDocument)
+	} else {
+		DOCUMENT_COUNT -= 1
+		store_document_status = errDocument.Error()
+		close(ch_storeDocument)
+	}
+
+	m_experience := models.Experience{
+		CompanyName:     experienceForm.CompanyName,
+		Position:        experienceForm.Position,
+		Type:            experienceForm.Type,
+		LocationAddress: experienceForm.LocationAddress,
+		IsCurrent:       experienceForm.IsCurrent,
+		StartAt:         experienceForm.StartAt,
+		Description:     experienceForm.Description,
+	}
+
+	v := reflect.ValueOf(&experienceForm)
+	fieldValue := v.Elem().FieldByName("EndAt")
+	if fieldValue.IsNil() {
+		currentTime := time.Now()
+		m_experience.EndAt = &currentTime
+	} else {
+		m_experience.EndAt = experienceForm.EndAt
+	}
+
+	log.Println("end at t:", m_experience.EndAt)
+
+	for i := 0; i < DOCUMENT_COUNT; i++ {
+		data := <-ch_storeDocument
+		store_document_status = data.Status
+		m_experience.AttachmentDocumentId = &data.DocumentId
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	errCreateExperience := gormDB.Transaction(func(tx *gorm.DB) error {
+		bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
+		tokenClaims := ParseJWT(bearerToken)
+		m_candidate := models.Candidate{}
+		errGetCandidateId := tx.Select("id").Where("user_id = ?", tokenClaims.Id).First(&m_candidate).Error
+		if errGetCandidateId != nil {
+			return errGetCandidateId
+		}
+
+		m_experience.CandidateId = m_candidate.Id
+		errStoreExperience := tx.Create(&m_experience).Error
+		if errStoreExperience != nil {
+			return errStoreExperience
+		}
+
+		return nil
+	})
+
+	if errCreateExperience != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errCreateExperience.Error(),
+			"message": "failed creating experience",
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"message":                    "experience stored successfully",
+			"attachment_document_status": store_document_status,
+		},
+	})
+}
+
+func (c *CandidatesHandler) UpdateExperience(context *gin.Context) {
+	updateExperienceForm := UpdateExperienceForm{}
+	if errBind := context.ShouldBind(&updateExperienceForm); errBind != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "doubble check your Form-Data fields, kids",
+		})
+
+		context.Abort()
+		return
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	m_experience := models.Experience{ID: updateExperienceForm.Id}
+	errGetExperience := gormDB.Select("attachment_document_id").First(&m_experience).Error
+	if errGetExperience != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errGetExperience.Error(),
+			"message": fmt.Sprintf("experience with id (%v) not found", updateExperienceForm.Id),
+		})
+
+		context.Abort()
+		return
+	}
+
+	ch_updateDocumentStatus := make(chan ChannelDocument, 1)
+	DOCUMENT_COUNT := 1
+	var attachment_document_status string
+	attachmentDocument, errDocument := context.FormFile("attachment_document")
+	if errDocument == nil {
+		if m_experience.AttachmentDocumentId == nil {
+			go StoreDocument("attachment_document", "experience", attachmentDocument, ch_updateDocumentStatus)
+		} else {
+			go UpdateDocument(*m_experience.AttachmentDocumentId, "attachment_document", "experience", attachmentDocument, ch_updateDocumentStatus)
+		}
+	} else {
+		attachment_document_status = errDocument.Error()
+		DOCUMENT_COUNT -= 1
+		close(ch_updateDocumentStatus)
+	}
+
+	experienceData := map[string]interface{}{}
+	v := reflect.ValueOf(updateExperienceForm)
+
+	for i := 0; i < v.NumField(); i++ {
+		fieldValue := v.Field(i)
+		keyName := v.Type().Field(i).Tag.Get("form")
+
+		if fieldValue.Kind() == reflect.Pointer && !fieldValue.IsNil() {
+			experienceData[keyName] = fieldValue.Elem().Interface()
+		}
+	}
+
+	for i := 0; i < DOCUMENT_COUNT; i++ {
+		data := <-ch_updateDocumentStatus
+		attachment_document_status = data.Status
+		if m_experience.AttachmentDocumentId == nil {
+			experienceData["attachment_document_id"] = data.DocumentId
+		}
+	}
+
+	updateExperience := gormDB.Model(&models.Experience{}).Where("id = ?", updateExperienceForm.Id).Updates(experienceData)
+	if updateExperience.RowsAffected == 0 {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Errorf("failed updating experience or record with id (%v) not founds", updateExperienceForm.Id),
+			"message": fmt.Sprintf("failed updating experience with id (%v)", updateExperienceForm.Id),
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"update_document_status": attachment_document_status,
+			"message":                fmt.Sprintf("%v experience updated successfully", updateExperience.RowsAffected),
+		},
+	})
+}
+func (c *CandidatesHandler) ExperienceGetById(context *gin.Context) {
+	experienceId, errParseUint := strconv.ParseUint(context.Param("id"), 10, 32)
+	if errParseUint != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errParseUint.Error(),
+			"message": "provide a valid number as :id parameter, your Experience :id param cannot be parsed",
+		})
+
+		context.Abort()
+		return
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	m_experience := map[string]interface{}{}
+	errGetExperience := gormDB.Model(&models.Experience{}).Select([]string{
+		"id",
+		"company_name",
+		"position",
+		"type",
+		"location_address",
+		"is_current",
+		"start_at",
+		"end_at",
+		"description",
+		"attachment_document_id",
+	}).Where("id = ?", experienceId).First(&m_experience).Error
+
+	if errGetExperience != nil {
+		context.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   errGetExperience.Error(),
+			"message": fmt.Sprintf("experience with id (%v), not found", experienceId),
+		})
+
+		context.Abort()
+		return
+	}
+
+	TransformsIdToPath([]string{
+		"attachment_document_id",
+	}, m_experience)
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    m_experience,
+	})
+}
+func (c *CandidatesHandler) ExperienceDeleteById(context *gin.Context) {
+	experienceId, errParseUint := strconv.ParseUint(context.Param("id"), 10, 32)
+	if errParseUint != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errParseUint.Error(),
+			"message": "provide a valid number as :id parameter, your Experience :id param cannot be parsed",
+		})
+
+		context.Abort()
+		return
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	errDeleteExperience := gormDB.Transaction(func(tx *gorm.DB) error {
+		m_experience := models.Experience{}
+		errGetExperience := tx.Select("attachment_document_id").Where("id = ?", experienceId).First(&m_experience).Error
+		if errGetExperience != nil {
+			return errGetExperience
+		}
+
+		deleteExperience := tx.Delete(&models.Experience{}, experienceId)
+		if deleteExperience.RowsAffected == 0 {
+			return fmt.Errorf("failed deleting experience with id (%v)", experienceId)
+		}
+
+		if m_experience.AttachmentDocumentId != nil {
+			deleteDocument := tx.Delete(&models.Document{}, m_experience.AttachmentDocumentId)
+			if deleteDocument.RowsAffected == 0 {
+				return fmt.Errorf("failed deleting attachment document with id (%v)", *m_experience.AttachmentDocumentId)
+			}
+		}
+
+		return nil
+	})
+
+	if errDeleteExperience != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errDeleteExperience.Error(),
+			"message": fmt.Sprintf("failed deleting experience with id (%v)", experienceId),
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("experience with id (%v) deleted successfully", experienceId),
 	})
 }

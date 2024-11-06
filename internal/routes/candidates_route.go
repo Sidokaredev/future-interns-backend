@@ -35,4 +35,11 @@ func CandidateRoutes(apiv1 *gin.RouterGroup) {
 		routerEducation.Handle(MethodGet, "/:id", candidateHandlers.EducationGetById)
 		routerEducation.Handle(MethodDelete, "/:id", candidateHandlers.EducationDeleteById)
 	}
+	routerExperience := router.Group("/experiences")
+	{
+		routerExperience.Handle(MethodPost, "/", candidateHandlers.StoreExperience)
+		routerExperience.Handle(MethodPatch, "/", candidateHandlers.UpdateExperience)
+		routerExperience.Handle(MethodGet, "/:id", candidateHandlers.ExperienceGetById)
+		routerExperience.Handle(MethodDelete, "/:id", candidateHandlers.ExperienceDeleteById)
+	}
 }
