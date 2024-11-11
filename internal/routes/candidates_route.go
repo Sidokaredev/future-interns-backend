@@ -42,4 +42,15 @@ func CandidateRoutes(apiv1 *gin.RouterGroup) {
 		routerExperience.Handle(MethodGet, "/:id", candidateHandlers.ExperienceGetById)
 		routerExperience.Handle(MethodDelete, "/:id", candidateHandlers.ExperienceDeleteById)
 	}
+	routerSocial := router.Group("/socials")
+	{
+		routerSocial.Handle(MethodPost, "/", candidateHandlers.StoreCandidateSocial)
+		routerSocial.Handle(MethodPatch, "/", candidateHandlers.UpdateCandidateSocial)
+		routerSocial.Handle(MethodDelete, "/:socialId", candidateHandlers.CandidateSocialDeleteById)
+	}
+	routerSkill := router.Group("/skills")
+	{
+		routerSkill.Handle(MethodPost, "/", candidateHandlers.StoreCandidateSkill)
+		routerSkill.Handle(MethodDelete, "/:skillId", candidateHandlers.CandidateSkillDeleteById)
+	}
 }

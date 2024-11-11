@@ -5,7 +5,6 @@ import (
 	initializer "future-interns-backend/init"
 	"future-interns-backend/internal/models"
 	"log"
-	"mime/multipart"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -13,8 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
@@ -102,323 +99,12 @@ type UpdateExperienceForm struct {
 	Description     *string    `form:"description"`
 }
 
-type ChannelImage struct {
-	Key     string
-	Status  string
-	ImageId uint
+type CandidateSocialForm struct {
+	// CandidateId string `form:"candidate_id" binding:"required"`
+	SocialId uint   `form:"social_id" binding:"required"`
+	Url      string `form:"url" binding:"required"`
 }
 
-type ChannelDocument struct {
-	Key        string
-	Status     string
-	DocumentId uint
-}
-
-/* helpers */
-func StoreImage(imageFor string, image *multipart.FileHeader, ch_storeImageStatus chan ChannelImage) {
-	imageData, errOpen := image.Open()
-	if errOpen != nil {
-		data := ChannelImage{
-			Key:     imageFor,
-			Status:  errOpen.Error(),
-			ImageId: 0,
-		}
-		log.Println("err open \t:", data)
-		ch_storeImageStatus <- data
-		return
-	}
-
-	defer imageData.Close()
-
-	imageInByte := make([]byte, image.Size)
-	_, errRead := imageData.Read(imageInByte)
-	if errRead != nil {
-		log.Println("err read \t:", errRead.Error())
-		data := ChannelImage{
-			Key:     imageFor,
-			Status:  errRead.Error(),
-			ImageId: 0,
-		}
-		ch_storeImageStatus <- data
-		return
-	}
-
-	gormDB, _ := initializer.GetGorm()
-	m_image := &models.Image{
-		Name:      image.Filename,
-		MimeType:  http.DetectContentType(imageInByte),
-		Size:      image.Size,
-		Blob:      imageInByte,
-		CreatedAt: time.Now(),
-	}
-
-	if errStoreImage := gormDB.Create(&m_image).Error; errStoreImage != nil {
-		log.Println("err store image \t:", errStoreImage)
-		data := ChannelImage{
-			Key:     imageFor,
-			Status:  errStoreImage.Error(),
-			ImageId: 0,
-		}
-		ch_storeImageStatus <- data
-		return
-	}
-	data := ChannelImage{
-		Key:     imageFor,
-		Status:  "stored successfully",
-		ImageId: m_image.ID,
-	}
-
-	log.Println("stored successfully!")
-	ch_storeImageStatus <- data
-}
-
-func UpdateImage(imageId uint, imageFor string, image *multipart.FileHeader, ch_updateImageStatus chan ChannelImage) {
-	imageOpen, errOpen := image.Open()
-	if errOpen != nil {
-		data := ChannelImage{
-			Key:     imageFor,
-			Status:  errOpen.Error(),
-			ImageId: 0,
-		}
-
-		ch_updateImageStatus <- data
-		return
-	}
-
-	defer imageOpen.Close()
-
-	imageBinaryData := make([]byte, image.Size)
-	_, errRead := imageOpen.Read(imageBinaryData)
-	if errRead != nil {
-		data := ChannelImage{
-			Key:     imageFor,
-			Status:  errRead.Error(),
-			ImageId: 0,
-		}
-
-		ch_updateImageStatus <- data
-		return
-	}
-
-	gormDB, _ := initializer.GetGorm()
-	m_image := &models.Image{
-		ID: imageId,
-	}
-	updatedTime := time.Now()
-	updateImageFields := gormDB.Model(&m_image).
-		Updates(models.Image{
-			Name:      image.Filename,
-			Size:      image.Size,
-			MimeType:  http.DetectContentType(imageBinaryData),
-			Blob:      imageBinaryData,
-			UpdatedAt: &updatedTime,
-		})
-
-	if updateImageFields.Error != nil {
-		data := ChannelImage{
-			Key:     imageFor,
-			Status:  updateImageFields.Error.Error(),
-			ImageId: 0,
-		}
-		ch_updateImageStatus <- data
-		return
-	}
-
-	data := ChannelImage{
-		Key:     imageFor,
-		Status:  "updated successfully",
-		ImageId: imageId,
-	}
-
-	ch_updateImageStatus <- data
-}
-
-func StoreDocument(documentFor string, purpose string, document *multipart.FileHeader, ch_storeDocumentStatus chan ChannelDocument) {
-	docData, errOpen := document.Open()
-	if errOpen != nil {
-		data := ChannelDocument{
-			Key:        documentFor,
-			Status:     errOpen.Error(),
-			DocumentId: 0,
-		}
-
-		ch_storeDocumentStatus <- data
-		return
-	}
-
-	defer docData.Close()
-
-	docBinaryData := make([]byte, document.Size)
-	_, errRead := docData.Read(docBinaryData)
-	if errRead != nil {
-		data := ChannelDocument{
-			Key:        documentFor,
-			Status:     errRead.Error(),
-			DocumentId: 0,
-		}
-
-		ch_storeDocumentStatus <- data
-		return
-	}
-
-	gormDB, _ := initializer.GetGorm()
-	m_document := &models.Document{
-		Purpose:   purpose,
-		Name:      document.Filename,
-		MimeType:  http.DetectContentType(docBinaryData),
-		Size:      document.Size,
-		Blob:      docBinaryData,
-		CreatedAt: time.Now(),
-	}
-	errStoreDocument := gormDB.Create(&m_document).Error
-
-	if errStoreDocument != nil {
-		data := ChannelDocument{
-			Key:        documentFor,
-			Status:     errStoreDocument.Error(),
-			DocumentId: 0,
-		}
-
-		ch_storeDocumentStatus <- data
-		return
-	}
-
-	data := ChannelDocument{
-		Key:        documentFor,
-		Status:     "document stored successfully",
-		DocumentId: m_document.ID,
-	}
-
-	ch_storeDocumentStatus <- data
-	close(ch_storeDocumentStatus)
-}
-
-func UpdateDocument(documentId uint, documentFor string, purpose string, document *multipart.FileHeader, ch_updateDocumentStatus chan ChannelDocument) {
-	documentData, errOpen := document.Open()
-	if errOpen != nil {
-		data := ChannelDocument{
-			Key:        documentFor,
-			Status:     errOpen.Error(),
-			DocumentId: 0,
-		}
-
-		ch_updateDocumentStatus <- data
-		return
-	}
-
-	documentBinaryData := make([]byte, document.Size)
-	_, errRead := documentData.Read(documentBinaryData)
-	if errRead != nil {
-		data := ChannelDocument{
-			Key:        documentFor,
-			Status:     errRead.Error(),
-			DocumentId: 0,
-		}
-
-		ch_updateDocumentStatus <- data
-		return
-	}
-
-	gormDB, _ := initializer.GetGorm()
-	m_document := models.Document{
-		ID: documentId,
-	}
-	updatedTime := time.Now()
-	errUpdateDocument := gormDB.Model(&m_document).
-		Updates(models.Document{
-			Name:      document.Filename,
-			MimeType:  http.DetectContentType(documentBinaryData),
-			Size:      document.Size,
-			Blob:      documentBinaryData,
-			UpdatedAt: &updatedTime}).
-		Error
-
-	if errUpdateDocument != nil {
-		data := ChannelDocument{
-			Key:        documentFor,
-			Status:     errUpdateDocument.Error(),
-			DocumentId: 0,
-		}
-
-		ch_updateDocumentStatus <- data
-		return
-	}
-
-	data := ChannelDocument{
-		Key:        documentFor,
-		Status:     "document updated successfully",
-		DocumentId: documentId,
-	}
-
-	ch_updateDocumentStatus <- data
-	close(ch_updateDocumentStatus)
-}
-
-func ParseJWT(bearer string) *TokenClaims {
-	secretKey := []byte(viper.GetString("authorization.jwt.secretKey"))
-	token, _ := jwt.ParseWithClaims(bearer, &TokenClaims{}, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		return secretKey, nil
-	})
-
-	claims, _ := token.Claims.(*TokenClaims)
-	return claims
-}
-
-func TransformsIdToPath(targets []string, record interface{}) {
-	switch recordTyped := record.(type) {
-	case []map[string]interface{}:
-		for index, data := range recordTyped {
-			for _, target := range targets {
-				newKey := strings.Replace(target, "id", "path", 1)
-				var pathType string
-				if strings.Contains(target, "image") {
-					pathType = "images"
-				} else {
-					pathType = "documents"
-				}
-				if value, exists := data[target]; exists {
-					if value != nil && value != 0 {
-						recordTyped[index][newKey] = fmt.Sprintf("/api/v1/%s/%v", pathType, value)
-					} else {
-						recordTyped[index][newKey] = nil
-					}
-					delete(recordTyped[index], target)
-				}
-			}
-		}
-	case map[string]interface{}:
-		for _, target := range targets {
-			newKey := strings.Replace(target, "id", "path", 1)
-			var pathType string
-			if strings.Contains(target, "image") {
-				pathType = "images"
-			} else {
-				pathType = "documents"
-			}
-			if value, exists := recordTyped[target]; exists {
-				if value != nil && value != 0 {
-					recordTyped[newKey] = fmt.Sprintf("/api/v1/%s/%v", pathType, value)
-				} else {
-					recordTyped[newKey] = nil
-				}
-				delete(recordTyped, target)
-			}
-		}
-	}
-}
-
-func SafelyNilPointer(v *uint) interface{} {
-	if v != nil {
-		return int(*v)
-	}
-
-	return nil
-}
-
-/* handlers */
 func (c *CandidatesHandler) Create(context *gin.Context) {
 	var candidateForm CreateCandidateForm
 	if errBind := context.ShouldBind(&candidateForm); errBind != nil {
@@ -1644,7 +1330,9 @@ func (c *CandidatesHandler) AddressDeleteById(context *gin.Context) {
 
 	deleteAddress := gormDB.Transaction(func(tx *gorm.DB) error {
 		m_candidateAddress := models.CandidateAddress{}
-		deleteCandidateAddress := tx.Model(&models.CandidateAddress{}).Where("address_id = ?", param_addressId).Delete(&m_candidateAddress)
+		deleteCandidateAddress := tx.Model(&models.CandidateAddress{}).
+			Where("address_id = ?", param_addressId).
+			Delete(&m_candidateAddress)
 		if deleteCandidateAddress.RowsAffected == 0 {
 			return fmt.Errorf("couldn't delete candidate_address with id (%v)", param_addressId)
 		}
@@ -2120,5 +1808,274 @@ func (c *CandidatesHandler) ExperienceDeleteById(context *gin.Context) {
 	context.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    fmt.Sprintf("experience with id (%v) deleted successfully", experienceId),
+	})
+}
+
+func (c *CandidatesHandler) StoreCandidateSocial(context *gin.Context) {
+	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	candidateSocialsData := CandidateSocialForm{}
+	if errBind := context.ShouldBind(&candidateSocialsData); errBind != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "double check your Form-Data fields, kids",
+		})
+
+		context.Abort()
+		return
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	timeNow := time.Now()
+	errCreateCandidateSocials := gormDB.Transaction(func(tx *gorm.DB) error {
+		candidate := map[string]interface{}{}
+		errGetCandidateId := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", claims.Id).Find(&candidate).Error
+		if errGetCandidateId != nil {
+			return errGetCandidateId
+		}
+
+		m_candidateSocial := models.CandidateSocial{
+			CandidateId: candidate["id"].(string),
+			SocialId:    candidateSocialsData.SocialId,
+			Url:         candidateSocialsData.Url,
+			CreatedAt:   timeNow,
+			UpdatedAt:   &timeNow,
+		}
+		errStoreCandidateSocials := tx.Create(&m_candidateSocial).Error
+		if errStoreCandidateSocials != nil {
+			return errStoreCandidateSocials
+		}
+
+		return nil
+	})
+
+	if errCreateCandidateSocials != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errCreateCandidateSocials.Error(),
+			"message": "failed creating candidateSocials",
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    "candidate social stored successfully",
+	})
+}
+
+func (c *CandidatesHandler) UpdateCandidateSocial(context *gin.Context) {
+	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	candidateSocialFields := struct {
+		SocialId uint   `form:"social_id" binding:"required"`
+		Url      string `form:"url"`
+	}{}
+	if errBind := context.ShouldBind(&candidateSocialFields); errBind != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "double check your Form-Data fields, kids",
+		})
+
+		context.Abort()
+		return
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	errUpdateCandidateSocial := gormDB.Transaction(func(tx *gorm.DB) error {
+		candidate := map[string]interface{}{}
+		errGetCandidateId := tx.Model(&models.Candidate{}).
+			Select("id").
+			Where("user_id = ?", claims.Id).Find(&candidate).Error
+		if errGetCandidateId != nil {
+			return errGetCandidateId
+		}
+
+		updateCandidateSocial := tx.Model(&models.CandidateSocial{}).
+			Where("candidate_id = ? AND social_id = ?", candidate["id"].(string), candidateSocialFields.SocialId).
+			Updates(map[string]interface{}{"url": candidateSocialFields.Url})
+		if updateCandidateSocial.RowsAffected == 0 {
+			return fmt.Errorf("failed updating these fields data \t: %v", candidateSocialFields)
+		}
+
+		return nil
+	})
+
+	if errUpdateCandidateSocial != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errUpdateCandidateSocial.Error(),
+			"message": "failed updating candidate social",
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("fields url: %v, updated successfully", candidateSocialFields.Url),
+	})
+}
+
+func (c *CandidatesHandler) CandidateSocialDeleteById(context *gin.Context) {
+	socialId, errParseUint := strconv.ParseUint(context.Param("socialId"), 10, 32)
+	if errParseUint != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errParseUint.Error(),
+			"message": "please provide a valid id for socialId param",
+		})
+
+		context.Abort()
+		return
+	}
+
+	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	errDeleteCandidateSocial := gormDB.Transaction(func(tx *gorm.DB) error {
+		candidate := map[string]interface{}{}
+		errGetCandidateId := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", claims.Id).Find(&candidate).Error
+		if errGetCandidateId != nil {
+			return errGetCandidateId
+		}
+
+		deleteData := tx.Where("candidate_id = ? AND social_id = ?", candidate["id"], socialId).Delete(&models.CandidateSocial{})
+		if deleteData.RowsAffected == 0 {
+			return fmt.Errorf("fail deleting candidate social with socialId %v, %v rows affected", socialId, deleteData.RowsAffected)
+		}
+		return nil
+	})
+
+	if errDeleteCandidateSocial != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errDeleteCandidateSocial.Error(),
+			"message": "failed deleting candidate social data, data might be unavailable in the database",
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("candidate social with socialId: %v deleted successfully", socialId),
+	})
+}
+
+func (c *CandidatesHandler) StoreCandidateSkill(context *gin.Context) {
+	candidateSkill := struct {
+		SkillId uint `form:"skill_id" binding:"required"`
+	}{}
+
+	if errBind := context.ShouldBind(&candidateSkill); errBind != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "double check your Form-Data fields, kids",
+		})
+
+		context.Abort()
+		return
+	}
+
+	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	errCreateCandidateSkill := gormDB.Transaction(func(tx *gorm.DB) error {
+		candidate := map[string]interface{}{}
+		errGetCandidateId := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", claims.Id).Find(&candidate).Error
+		if errGetCandidateId != nil {
+			return errGetCandidateId
+		}
+
+		timeNow := time.Now()
+		m_candidateSkill := models.CandidateSkill{
+			CandidateId: candidate["id"].(string),
+			SkillId:     candidateSkill.SkillId,
+			CreatedAt:   timeNow,
+			UpdatedAt:   &timeNow,
+		}
+		errCreating := tx.Create(&m_candidateSkill).Error
+		if errCreating != nil {
+			return errCreating
+		}
+
+		return nil
+	})
+
+	if errCreateCandidateSkill != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errCreateCandidateSkill.Error(),
+			"message": fmt.Sprintf("failed creating candidateSkill with skillId %v", candidateSkill.SkillId),
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("candidateSkill with skillId %v stored successfully", candidateSkill.SkillId),
+	})
+}
+
+func (c *CandidatesHandler) CandidateSkillDeleteById(context *gin.Context) {
+	skillId, errParseUint := strconv.ParseUint(context.Param("skillId"), 10, 32)
+	if errParseUint != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errParseUint.Error(),
+			"message": "please provide a valid skill id for url parameter :socialId",
+		})
+
+		context.Abort()
+		return
+	}
+
+	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	errDeleteCandidateSkill := gormDB.Transaction(func(tx *gorm.DB) error {
+		candidate := map[string]interface{}{}
+		errGetCandidateId := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", claims.Id).Find(&candidate).Error
+		if errGetCandidateId != nil {
+			return errGetCandidateId
+		}
+
+		deleteData := tx.Where("candidate_id = ? AND skill_id = ?", candidate["id"].(string), skillId).Delete(&models.CandidateSkill{})
+		if deleteData.RowsAffected == 0 {
+			return fmt.Errorf("failed deleting candidate skill with skill id %v, %v rows affected", skillId, deleteData.RowsAffected)
+		}
+
+		return nil
+	})
+
+	if errDeleteCandidateSkill != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errDeleteCandidateSkill.Error(),
+			"message": "failed deleting candidate skill data, data might be unavailable in the database",
+		})
+
+		context.Abort()
+		return
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("candidate skill with skill id %v, deleted successfully", skillId),
 	})
 }

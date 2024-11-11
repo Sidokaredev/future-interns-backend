@@ -12,5 +12,6 @@ func ImageRoutes(apiv1 *gin.RouterGroup) {
 	router := apiv1.Group("/images")
 	{
 		router.Handle(MethodGet, "/:id", imageHandlers.GetById)
+		router.Handle(MethodPost, "/", imageHandlers.Create)
 	}
 }

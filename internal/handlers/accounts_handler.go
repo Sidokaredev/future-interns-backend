@@ -30,11 +30,6 @@ type Register struct {
 	Auth
 }
 
-type TokenClaims struct {
-	Id string
-	jwt.RegisteredClaims
-}
-
 /* helpers */
 func GenUuid(fullname string, ch_uuid chan string) {
 	namespace := uuid.Must(uuid.NewRandom())
