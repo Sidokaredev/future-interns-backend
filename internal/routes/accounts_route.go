@@ -17,6 +17,6 @@ func AccountsRoutes(apiv1 *gin.RouterGroup) {
 		router.Handle(MethodPost, "/create", accountHandlers.RegisterAccount)
 		router.Handle(MethodGet, "/identities", func(ctx *gin.Context) {})
 		router.Handle(MethodGet, "/identities/:id", func(ctx *gin.Context) {})
-		router.Handle(MethodGet, "/getUser/:userId", middlewares.AuthorizationWithBearer(), accountHandlers.GetUser)
+		router.Handle(MethodGet, "/user-information", middlewares.AuthorizationWithBearer(), middlewares.RoleCheck(), accountHandlers.UserInformation)
 	}
 }

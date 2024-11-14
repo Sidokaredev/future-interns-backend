@@ -335,7 +335,6 @@ func (c *CandidatesHandler) Update(context *gin.Context) {
 	//  storing candidate field prop
 	var updated_status string
 	if len(mapCandidateFields) != 0 {
-		log.Println("updated query still running even there are no data available...", mapCandidateFields)
 		updateCandidate := gormDB.Model(&models.Candidate{}).Where("id = ?", m_candidate.Id).Updates(mapCandidateFields)
 		if updateCandidate.Error != nil {
 			context.JSON(http.StatusInternalServerError, gin.H{
@@ -1179,8 +1178,8 @@ func (c *CandidatesHandler) StoreAddresses(context *gin.Context) {
 	for _, address := range addressesJSON {
 		addressesData = append(addressesData, models.Address{
 			Street:       address.Street,
-			Neighborhood: address.Neighborhood,
-			RuralArea:    address.RuralArea,
+			Neighborhood: &address.Neighborhood,
+			RuralArea:    &address.RuralArea,
 			SubDistrict:  address.SubDistrict,
 			City:         address.City,
 			Province:     address.Province,

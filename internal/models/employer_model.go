@@ -16,20 +16,21 @@ type Employer struct {
 	TotalOfEmployee          string         `gorm:"type:nvarchar(64);not null"`
 	Website                  string         `gorm:"type:nvarchar(256);not null"`
 	Description              string         `gorm:"type:nvarchar(512)"`
-	BackgroundProfileImageId uint           `gorm:"type:bigint"`
-	ProfileImageId           uint           `gorm:"type:bigint"`
+	BackgroundProfileImageId *uint          `gorm:"type:bigint"`
+	ProfileImageId           *uint          `gorm:"type:bigint"`
 	UserId                   string         `gorm:"type:nvarchar(256);not null"`
 	CreatedAt                time.Time      `gorm:"type:datetime;not null"`
-	UpdatedAt                time.Time      `gorm:"type:datetime"`
+	UpdatedAt                *time.Time     `gorm:"type:datetime"`
 	DeleteAt                 gorm.DeletedAt `gorm:"type:datetime"`
 	/* Belong To */
-	User                   User
-	BackgroundProfileImage Image `gorm:"foreignKey:BackgroundProfileImageId"`
-	ProfileImage           Image `gorm:"foreignKey:ProfileImageId"`
+	User                   *User
+	BackgroundProfileImage *Image `gorm:"foreignKey:BackgroundProfileImageId"`
+	ProfileImage           *Image `gorm:"foreignKey:ProfileImageId"`
 	/* Has Many */
-	Headquarters []Headquarter `gorm:"foreignKey:EmployerId"`
-	OfficeImages []OfficeImage `gorm:"foreignKey:EmployerId"`
-	Vacancies    []Vacancy
+	Headquarters    []*Headquarter `gorm:"foreignKey:EmployerId"`
+	OfficeImages    []*OfficeImage `gorm:"foreignKey:EmployerId"`
+	Vacancies       []*Vacancy
+	EmployerSocials []*EmployerSocial // NEW ADDED
 	/* Many to Many */
 	Socials []*Social `gorm:"many2many:employer_socials"`
 }

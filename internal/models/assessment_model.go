@@ -15,7 +15,7 @@ type Assessment struct {
 	DueDate        time.Time      `gorm:"type:datetime;not null"`
 	VacancyId      string         `gorm:"type:nvarchar(256);not null"`
 	CreatedAt      time.Time      `gorm:"type:datetime;not null"`
-	UpdatedAt      time.Time      `gorm:"type:datetime"`
+	UpdatedAt      *time.Time     `gorm:"type:datetime"`
 	DeleteAt       gorm.DeletedAt `gorm:"type:datetime"`
 	/* Has Many */
 	AssessmentDocuments           []AssessmentDocument           `gorm:"foreignKey:AssessmentId"`

@@ -21,7 +21,7 @@ type Vacancy struct {
 	IsInactive      bool           `gorm:"type:bit;not null;default:0"`
 	EmployerId      string         `gorm:"type:nvarchar(256);not null"`
 	CreatedAt       time.Time      `gorm:"type:datetime;not null"`
-	UpdatedAt       time.Time      `gorm:"type:datetime"`
+	UpdatedAt       *time.Time     `gorm:"type:datetime"`
 	DeletedAt       gorm.DeletedAt `gorm:"type:datetime"`
 	/* Has Many */
 	Pipelines   []Pipeline

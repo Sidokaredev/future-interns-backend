@@ -14,16 +14,16 @@ import (
 )
 
 func AuthorizationWithBearer() gin.HandlerFunc {
-	return func(context *gin.Context) {
+	return func(ctx *gin.Context) {
 		var secretKey = []byte(viper.GetString("authorization.jwt.secretKey"))
-		bearerToken := context.GetHeader("Authorization")
+		bearerToken := ctx.GetHeader("Authorization")
 		if !strings.HasPrefix(bearerToken, "Bearer ") {
-			context.JSON(http.StatusBadRequest, gin.H{
+			ctx.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
 				"error":   "no token was provided",
 				"message": "provide Authorization with Bearer token, kids",
 			})
-			context.Abort()
+			ctx.Abort()
 			return
 		}
 		bearerToken = strings.TrimPrefix(bearerToken, "Bearer ")
@@ -44,31 +44,31 @@ func AuthorizationWithBearer() gin.HandlerFunc {
 			)
 			switch {
 			case InvalidSignature:
-				context.JSON(http.StatusBadRequest, gin.H{
+				ctx.JSON(http.StatusBadRequest, gin.H{
 					"success": false,
 					"error":   errParse.Error(),
 					"message": "invalid secret key, double check the secret key",
 				})
-				context.Abort()
+				ctx.Abort()
 				return
 			case TokenExpired:
-				context.JSON(http.StatusBadRequest, gin.H{
+				ctx.JSON(http.StatusBadRequest, gin.H{
 					"success": false,
 					"error":   errParse.Error(),
 					"message": "provided token was expired",
 				})
-				context.Abort()
+				ctx.Abort()
 				return
 			case TokenMalformed:
-				context.JSON(http.StatusBadRequest, gin.H{
+				ctx.JSON(http.StatusBadRequest, gin.H{
 					"success": false,
 					"error":   errParse.Error(),
 					"message": "invalid token value, double check your token",
 				})
-				context.Abort()
+				ctx.Abort()
 				return
 			}
 		}
-		context.Next()
+		ctx.Next()
 	}
 }

@@ -265,6 +265,67 @@ func UpdateDocument(documentId uint, documentFor string, purpose string, documen
 	close(ch_updateDocumentStatus)
 }
 
+func MultipleImageData(listOfImages []*multipart.FileHeader) ([]models.Image, map[string]string) {
+	images := []models.Image{}
+	image_status := map[string]string{}
+	for _, image := range listOfImages {
+		imageData, errOpen := image.Open()
+		if errOpen != nil {
+			image_status[image.Filename] = errOpen.Error()
+			continue
+		}
+
+		imageBinaryData := make([]byte, image.Size)
+		_, errRead := imageData.Read(imageBinaryData)
+		if errRead != nil {
+			image_status[image.Filename] = errRead.Error()
+			continue
+		}
+
+		mimeType := http.DetectContentType(imageBinaryData)
+		if !strings.HasPrefix(mimeType, "image/") {
+			image_status[image.Filename] = "not a vaid image. file type should be image/*"
+			continue
+		}
+
+		images = append(images, models.Image{
+			Name:     image.Filename,
+			Size:     image.Size,
+			MimeType: mimeType,
+			Blob:     imageBinaryData,
+		})
+
+		image_status[image.Filename] = "valid image file"
+	}
+
+	return images, image_status
+}
+
+func ImageData(image *multipart.FileHeader) (*models.Image, error) {
+	imageData, errOpen := image.Open()
+	if errOpen != nil {
+		return nil, errOpen
+	}
+
+	imageBinaryData := make([]byte, image.Size)
+	_, errRead := imageData.Read(imageBinaryData)
+	if errRead != nil {
+		return nil, errRead
+	}
+
+	timeNow := time.Now()
+
+	m_image := models.Image{
+		Name:      image.Filename,
+		Size:      image.Size,
+		MimeType:  http.DetectContentType(imageBinaryData),
+		Blob:      imageBinaryData,
+		UpdatedAt: &timeNow,
+	}
+
+	return &m_image, nil
+}
+
 /* DATA TRANSFORM */
 func TransformsIdToPath(targets []string, record interface{}) {
 	switch recordTyped := record.(type) {

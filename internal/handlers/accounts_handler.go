@@ -7,6 +7,7 @@ import (
 	"future-interns-backend/internal/models"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -134,6 +135,28 @@ func (h *AccountsHandler) Auth(context *gin.Context) {
 		})
 		return
 	}
+
+	/*
+		check identities table to determine role
+		1. create sdkadmin user on migration -> have all access
+	*/
+	identityAccess := map[string]interface{}{}
+	errGetUserRole := gormDB.Model(&models.IdentityAccess{}).
+		Select([]string{"roles.name", "roles.description", "identity_accesses.type"}).
+		Joins("INNER JOIN roles ON roles.id = identity_accesses.role_id").
+		Where("user_id = ?", m_user.Id).
+		First(&identityAccess).Error
+
+	if errGetUserRole != nil {
+		context.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   errGetUserRole.Error(),
+			"message": fmt.Sprintf("unidentified user with email %s; your account has no access to any resources", auth.Email),
+		})
+
+		context.Abort()
+		return
+	}
 	/* sign token */
 	token := GenerateToken(m_user.Id, TokenExpiration)
 
@@ -142,6 +165,7 @@ func (h *AccountsHandler) Auth(context *gin.Context) {
 		"data": gin.H{
 			"access_token": token,
 			"user_id":      m_user.Id,
+			"role":         identityAccess,
 		},
 	})
 }
@@ -207,22 +231,23 @@ func (h *AccountsHandler) RegisterAccount(context *gin.Context) {
 	})
 }
 
-func (h *AccountsHandler) GetUser(context *gin.Context) {
-	pathParamId := context.Param("userId")
-	if pathParamId == "" {
-		context.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "param (id) is required",
-			"message": "provide the user id, kids. (e.g /api/v1/getUser/[[UserId]])",
-		})
-		context.Abort()
-		return
-	}
+func (h *AccountsHandler) UserInformation(context *gin.Context) {
+	identities, _ := context.Get("identity-accesses")
+	permissions, _ := context.Get("permissions")
+
+	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
 
 	gormDB, _ := initializer.GetGorm()
-	m_user := models.User{Id: pathParamId}
-	if errSearchUser := gormDB.First(&m_user).Error; errSearchUser != nil {
-		message := fmt.Sprintf("user with id (%s) doesn't exist", pathParamId)
+	user_data := map[string]interface{}{}
+	if errSearchUser := gormDB.Model(&models.User{}).
+		Select([]string{
+			"fullname",
+			"email",
+		}).
+		Where("id = ?", claims.Id).
+		First(&user_data).Error; errSearchUser != nil {
+		message := fmt.Sprintf("user with id (%s) doesn't exist", claims.Id)
 		context.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   errSearchUser.Error(),
@@ -234,6 +259,10 @@ func (h *AccountsHandler) GetUser(context *gin.Context) {
 
 	context.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    m_user,
+		"data": gin.H{
+			"user":        user_data,
+			"identity":    identities,
+			"permissions": permissions,
+		},
 	})
 }
