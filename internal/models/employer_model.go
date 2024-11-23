@@ -18,7 +18,7 @@ type Employer struct {
 	Description              string         `gorm:"type:nvarchar(512)"`
 	BackgroundProfileImageId *uint          `gorm:"type:bigint"`
 	ProfileImageId           *uint          `gorm:"type:bigint"`
-	UserId                   string         `gorm:"type:nvarchar(256);not null"`
+	UserId                   string         `gorm:"type:nvarchar(256);unique;not null"`
 	CreatedAt                time.Time      `gorm:"type:datetime;not null"`
 	UpdatedAt                *time.Time     `gorm:"type:datetime"`
 	DeleteAt                 gorm.DeletedAt `gorm:"type:datetime"`

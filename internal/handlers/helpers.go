@@ -12,6 +12,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/spf13/viper"
+	"gorm.io/gorm"
 )
 
 /* TOKEN */
@@ -326,6 +327,66 @@ func ImageData(image *multipart.FileHeader) (*models.Image, error) {
 	return &m_image, nil
 }
 
+func MultipleDocumentData(listOfDocuments []*multipart.FileHeader, purposeOfDocuments string) ([]models.Document, map[string]string) {
+	documents := []models.Document{}
+	document_status := map[string]string{}
+	for _, document := range listOfDocuments {
+		documentData, errOpen := document.Open()
+		if errOpen != nil {
+			document_status[document.Filename] = errOpen.Error()
+			continue
+		}
+
+		documentBinaryData := make([]byte, document.Size)
+		_, errRead := documentData.Read(documentBinaryData)
+		if errRead != nil {
+			document_status[document.Filename] = errRead.Error()
+			continue
+		}
+
+		mimeType := http.DetectContentType(documentBinaryData)
+		if !strings.HasPrefix(mimeType, "application/") {
+			document_status[document.Filename] = "not a valid document. file type should be application/*"
+			continue
+		}
+
+		documents = append(documents, models.Document{
+			Purpose:  purposeOfDocuments,
+			Name:     document.Filename,
+			Size:     document.Size,
+			MimeType: mimeType,
+			Blob:     documentBinaryData,
+		})
+
+		document_status[document.Filename] = "valid document file"
+	}
+
+	return documents, document_status
+}
+
+func DocumentData(document *multipart.FileHeader, purposeOfDocument string) (*models.Document, error) {
+	documentData, errOpen := document.Open()
+	if errOpen != nil {
+		return nil, errOpen
+	}
+
+	documentInBinary := make([]byte, document.Size)
+	_, errRead := documentData.Read(documentInBinary)
+	if errRead != nil {
+		return nil, errRead
+	}
+
+	m_document := models.Document{
+		Purpose:  purposeOfDocument,
+		Name:     document.Filename,
+		Size:     document.Size,
+		MimeType: http.DetectContentType(documentInBinary),
+		Blob:     documentInBinary,
+	}
+
+	return &m_document, nil
+}
+
 /* DATA TRANSFORM */
 func TransformsIdToPath(targets []string, record interface{}) {
 	switch recordTyped := record.(type) {
@@ -374,6 +435,43 @@ func TransformsIdToPath(targets []string, record interface{}) {
 func SafelyNilPointer(v *uint) interface{} {
 	if v != nil {
 		return int(*v)
+	}
+
+	return nil
+}
+
+func SafelyNilPointerV2(v *interface{}) interface{} {
+	if v != nil {
+		return v
+	}
+
+	return nil
+}
+
+/* DATABASE GUARDS */
+func SLAGuard(vacancyId string, tx *gorm.DB) error {
+	expirationGuard := tx.Exec(`
+		UPDATE vacancies
+		SET sla = CASE
+								WHEN sla != 0 THEN sla - DATEDIFF(HOUR, created_at, GETDATE())
+								ELSE sla
+							END,
+				is_inactive = CASE
+												WHEN sla = 0 THEN 1
+												ELse is_inactive
+											END
+		WHERE id = ? 
+	`, vacancyId)
+
+	if expirationGuard.Error != nil {
+		return expirationGuard.Error
+	}
+
+	RowsAffected := expirationGuard.RowsAffected
+	if RowsAffected == 0 {
+		log.Printf("no rows were updated, this might record with id %v doesn't exist in database", vacancyId)
+	} else {
+		log.Printf("SLA guard do their work!")
 	}
 
 	return nil

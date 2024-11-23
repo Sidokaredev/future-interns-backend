@@ -151,6 +151,8 @@ func Migrate(target string) {
 			{Name: "users.employer.get", Resource: "users", Description: "Get detailed user data as a employer.", CreatedAt: timeNow, UpdatedAt: &timeNow},
 			{Name: "users.employer.list", Resource: "users", Description: "List all records of users as employers.", CreatedAt: timeNow, UpdatedAt: &timeNow},
 			{Name: "users.employer.delete", Resource: "users", Description: "Delete the user's data as a employer.", CreatedAt: timeNow, UpdatedAt: &timeNow},
+			/* vacancies */
+			{Name: "vacancies.sla.update", Resource: "vacancies", Description: "Update the SLA data in the vacancies table, where the SLA data is a numeric count of hours.", CreatedAt: time.Now()},
 		}
 
 		errCreatePermissions := gormDB.Create(&permissions).Error

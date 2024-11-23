@@ -53,4 +53,21 @@ func CandidateRoutes(apiv1 *gin.RouterGroup) {
 		routerSkill.Handle(MethodPost, "/", candidateHandlers.StoreCandidateSkill)
 		routerSkill.Handle(MethodDelete, "/:skillId", candidateHandlers.CandidateSkillDeleteById)
 	}
+	routerPipeline := router.Group("/pipelines")
+	{
+		routerPipeline.Handle(MethodPost, "/", candidateHandlers.CreatePipeline)
+	}
+	routerAssessment := router.Group("/assessments")
+	{
+		// all stuff about assessments here
+	}
+	routerAssessmentSubmission := routerAssessment.Group("/submissions")
+	{
+		routerAssessmentSubmission.Handle(MethodPost, "/", candidateHandlers.StoreAssessmentSubmissions)
+		routerAssessmentSubmission.Handle(MethodDelete, "/:id", candidateHandlers.DeleteAssessmentSubmission)
+	}
+	routerOffering := router.Group("/offerings")
+	{
+		routerOffering.Handle(MethodPatch, "/:id", candidateHandlers.UpdateOffering)
+	}
 }

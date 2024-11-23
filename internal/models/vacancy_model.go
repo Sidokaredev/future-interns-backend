@@ -26,4 +26,6 @@ type Vacancy struct {
 	/* Has Many */
 	Pipelines   []Pipeline
 	Assessments []Assessment
+	Interviews  []Interview // new
+	Offerings   []Offering  // new
 }

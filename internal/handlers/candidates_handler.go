@@ -105,6 +105,7 @@ type CandidateSocialForm struct {
 	Url      string `form:"url" binding:"required"`
 }
 
+/* CANDIDATE */
 func (c *CandidatesHandler) Create(context *gin.Context) {
 	var candidateForm CreateCandidateForm
 	if errBind := context.ShouldBind(&candidateForm); errBind != nil {
@@ -1161,6 +1162,7 @@ func (c *CandidatesHandler) UnscopedById(context *gin.Context) {
 	})
 }
 
+/* ADDRESS */
 func (c *CandidatesHandler) StoreAddresses(context *gin.Context) {
 	addressesJSON := []CreateAddressJSON{}
 	if errBind := context.ShouldBindJSON(&addressesJSON); errBind != nil {
@@ -1362,6 +1364,7 @@ func (c *CandidatesHandler) AddressDeleteById(context *gin.Context) {
 	})
 }
 
+/* EDUCATION */
 func (c *CandidatesHandler) StoreEducations(context *gin.Context) {
 	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
 	tokenClaims := ParseJWT(bearerToken)
@@ -1535,6 +1538,7 @@ func (c *CandidatesHandler) EducationDeleteById(context *gin.Context) {
 	})
 }
 
+/* EXPERIENCE */
 func (c *CandidatesHandler) StoreExperience(context *gin.Context) {
 	experienceForm := CreateExperienceForm{}
 	if errBind := context.ShouldBind(&experienceForm); errBind != nil {
@@ -1810,6 +1814,7 @@ func (c *CandidatesHandler) ExperienceDeleteById(context *gin.Context) {
 	})
 }
 
+/* SOCIAL */
 func (c *CandidatesHandler) StoreCandidateSocial(context *gin.Context) {
 	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
 	claims := ParseJWT(bearerToken)
@@ -1971,6 +1976,7 @@ func (c *CandidatesHandler) CandidateSocialDeleteById(context *gin.Context) {
 	})
 }
 
+/* SKILL */
 func (c *CandidatesHandler) StoreCandidateSkill(context *gin.Context) {
 	candidateSkill := struct {
 		SkillId uint `form:"skill_id" binding:"required"`
@@ -2076,5 +2082,263 @@ func (c *CandidatesHandler) CandidateSkillDeleteById(context *gin.Context) {
 	context.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    fmt.Sprintf("candidate skill with skill id %v, deleted successfully", skillId),
+	})
+}
+
+/* PIPELINE */
+func (c *CandidatesHandler) CreatePipeline(ctx *gin.Context) {
+	request := struct {
+		VacancyId string `form:"vacancy_id" binding:"required"`
+	}{}
+	if errBind := ctx.ShouldBind(&request); errBind != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "double check your Form-Data fields, kids",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ch_uuid := make(chan string, 1)
+	go GenUuid(request.VacancyId, ch_uuid)
+
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	errCreatePipeline := gormDB.Transaction(func(tx *gorm.DB) error {
+		candidate := map[string]interface{}{}
+		errGetCandidateId := tx.Model(&models.Candidate{}).
+			Select("id").
+			Where("user_id = ?", claims.Id).
+			First(&candidate).Error
+
+		if errGetCandidateId != nil {
+			return errGetCandidateId
+		}
+
+		m_pipeline := models.Pipeline{
+			Id:          <-ch_uuid,
+			CandidateId: candidate["id"].(string),
+			VacancyId:   request.VacancyId,
+			Stage:       "Screening",
+			Status:      "Applied",
+			CreatedAt:   time.Now(),
+			UpdatedAt:   nil,
+		}
+		errCreate := tx.Create(&m_pipeline).Error
+		if errCreate != nil {
+			return errCreate
+		}
+
+		return nil
+	})
+
+	if errCreatePipeline != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errCreatePipeline.Error(),
+			"message": "failed creating pipeline",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"data": gin.H{
+			"message": "pipeline created successfully",
+		},
+	})
+}
+
+func (c *CandidatesHandler) ListPipeline(ctx *gin.Context) {
+	/*
+		List pipeline based on candidates
+	*/
+}
+
+/* ASSESSMENT SUBMISSION */
+func (c *CandidatesHandler) StoreAssessmentSubmissions(ctx *gin.Context) {
+	assessmentSubmissions := struct {
+		AssessmentId uint   `form:"assessment_id" binding:"required"`
+		PipelineId   string `form:"pipeline_id" binding:"required"`
+	}{}
+
+	if errBind := ctx.ShouldBind(&assessmentSubmissions); errBind != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "double check your JSON fields, kids",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	form, _ := ctx.MultipartForm()
+	submissionDocuments := form.File["submission_documents[]"]
+	if len(submissionDocuments) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   fmt.Errorf("%v documents attached, require at least one documents", len(submissionDocuments)),
+			"message": "missing submission documents, please provide at least one document",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	submissionDocumentsData, submission_documents_status := MultipleDocumentData(submissionDocuments, "assessment_submission")
+
+	gormDB, _ := initializer.GetGorm()
+	errStoreAssessmentSubmissions := gormDB.Transaction(func(tx *gorm.DB) error {
+		errStoreDocuments := tx.Create(&submissionDocumentsData).Error
+		if errStoreDocuments != nil {
+			return errStoreDocuments
+		}
+
+		m_assessmentSubmissions := []models.AssessmentAssigneeSubmission{}
+		for _, documents := range submissionDocumentsData {
+			m_assessmentSubmissions = append(m_assessmentSubmissions, models.AssessmentAssigneeSubmission{
+				AssessmentId:         assessmentSubmissions.AssessmentId,
+				PipelineId:           assessmentSubmissions.PipelineId,
+				SubmissionDocumentId: documents.ID,
+				CreatedAt:            time.Now(),
+				UpdatedAt:            nil,
+			})
+		}
+
+		errStoreSubmissions := tx.Create(&m_assessmentSubmissions).Error
+		if errStoreSubmissions != nil {
+			return errStoreSubmissions
+		}
+
+		return nil
+	})
+
+	if errStoreAssessmentSubmissions != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errStoreAssessmentSubmissions.Error(),
+			"message": fmt.Sprintf("failed storing %v assessment submissions", len(submissionDocumentsData)),
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"data": gin.H{
+			"message":          fmt.Sprintf("%v assessment submissions stored successfully", len(submissionDocumentsData)),
+			"documents_status": submission_documents_status,
+		},
+	})
+}
+
+func (c *CandidatesHandler) DeleteAssessmentSubmission(ctx *gin.Context) {
+	/*
+		just need to provide submission document id, because that value should be unique
+	*/
+	submissionDocumentId, errParse := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if errParse != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errParse.Error(),
+			"message": "submission document id must be a valid number",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	errDeleteAssessmentSubmission := gormDB.Transaction(func(tx *gorm.DB) error {
+		deleteAssessmentSubmission := tx.Where("submission_document_id = ?", submissionDocumentId).Delete(&models.AssessmentAssigneeSubmission{})
+		if deleteAssessmentSubmission.RowsAffected == 0 {
+			return fmt.Errorf("unable delete assessment document with submission_document_id %v", submissionDocumentId)
+		}
+
+		deleteDocument := tx.Where("id = ?", submissionDocumentId).Delete(&models.Document{})
+		if deleteDocument.RowsAffected == 0 {
+			return fmt.Errorf("unable delete document with id %v", submissionDocumentId)
+		}
+
+		return nil
+	})
+
+	if errDeleteAssessmentSubmission != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errDeleteAssessmentSubmission.Error(),
+			"message": "failed deleting assessment submissiona document",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"message": "assessment document deleted successfully",
+		},
+	})
+}
+
+/* OFFERING */
+func (c *CandidatesHandler) UpdateOffering(ctx *gin.Context) {
+	offeringId := ctx.Param("id")
+	if _, errParse := strconv.ParseUint(offeringId, 10, 32); errParse != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errParse.Error(),
+			"message": "offering id must be a valid number as url parameter",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	offeringForm := struct {
+		Status string `form:"status" binding:"required"`
+	}{}
+	if errBind := ctx.ShouldBind(&offeringForm); errBind != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "double check your Form-Data fields, kids",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	timeNow := time.Now()
+	updateOffering := gormDB.Model(&models.Offering{}).
+		Where("id = ?", offeringId).
+		Updates(map[string]interface{}{"status": offeringForm.Status, "updated_at": &timeNow})
+
+	if updateOffering.RowsAffected == 0 {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("%v rows affected. it might because the record with id %v doesn't exists in database", updateOffering.RowsAffected, offeringId),
+			"message": "failed updating offering",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"message": "offering updated successfully",
+		},
 	})
 }
