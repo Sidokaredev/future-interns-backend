@@ -4,7 +4,6 @@ import (
 	"fmt"
 	initializer "future-interns-backend/init"
 	"future-interns-backend/internal/models"
-	"log"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -34,6 +33,7 @@ type CreateEducationJSON struct {
 	University  string     `json:"university" binding:"required"`
 	Address     string     `json:"address" binding:"required"`
 	Major       string     `json:"major" binding:"required"`
+	Degree      string     `json:"degree" binding:"required"`
 	IsGraduated bool       `json:"is_graduated"`
 	StartAt     time.Time  `json:"start_at" binding:"required"`
 	EndAt       *time.Time `json:"end_at"`
@@ -45,6 +45,7 @@ type UpdateEducationJSON struct {
 	University  *string    `json:"university"`
 	Address     *string    `json:"address"`
 	Major       *string    `json:"major"`
+	Degree      *string    `json:"degree"`
 	IsGraduated *bool      `json:"is_graduated"`
 	StartAt     *time.Time `json:"start_at"`
 	EndAt       *time.Time `json:"end_at"`
@@ -101,8 +102,8 @@ type UpdateExperienceForm struct {
 
 type CandidateSocialForm struct {
 	// CandidateId string `form:"candidate_id" binding:"required"`
-	SocialId uint   `form:"social_id" binding:"required"`
-	Url      string `form:"url" binding:"required"`
+	SocialId uint   `json:"social_id" binding:"required"`
+	Url      string `json:"url" binding:"required"`
 }
 
 /* CANDIDATE */
@@ -363,6 +364,200 @@ func (c *CandidatesHandler) Update(context *gin.Context) {
 }
 
 func (c *CandidatesHandler) Get(context *gin.Context) {
+	queries, _ := context.GetQuery("includes")
+	gormDB, _ := initializer.GetGorm()
+	final_candidate := map[string]any{}
+	candidate := models.Candidate{}
+
+	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	errGetCandidateRows := gormDB.Transaction(func(tx *gorm.DB) error {
+		candidateRows := tx.Model(&models.Candidate{})
+		if strings.Contains(queries, "user") {
+			candidateRows = candidateRows.Preload("User")
+		}
+		if strings.Contains(queries, "address") {
+			candidateRows = candidateRows.Preload("Addresses", func(db *gorm.DB) *gorm.DB {
+				return db.Where("type = ?", "home").Limit(1).Order("created_at DESC")
+			})
+		}
+		if strings.Contains(queries, "skills") {
+			candidateRows = candidateRows.Preload("Skills")
+		}
+		if strings.Contains(queries, "educations") {
+			candidateRows = candidateRows.Preload("Educations")
+		}
+		if strings.Contains(queries, "experiences") {
+			candidateRows = candidateRows.Preload("Experiences")
+		}
+		if strings.Contains(queries, "socials") {
+			candidateRows = candidateRows.Preload("CandidateSocials.Social")
+		}
+
+		candidateRows = candidateRows.Where("user_id = ?", claims.Id).First(&candidate)
+
+		if candidateRows.Error != nil {
+			return candidateRows.Error
+		} else if candidateRows.RowsAffected == 0 {
+			return fmt.Errorf("no candidate record, %d rows affected", candidateRows.RowsAffected)
+		}
+
+		return nil
+	})
+
+	if errGetCandidateRows != nil {
+		context.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errGetCandidateRows.Error(),
+			"message": "failed getting candidate record",
+		})
+		context.Abort()
+		return
+	}
+
+	final_candidate["id"] = candidate.Id
+	final_candidate["expertise"] = candidate.Expertise
+	final_candidate["about_me"] = candidate.AboutMe
+	final_candidate["date_of_birth"] = candidate.DateOfBirth
+	final_candidate["background_profile_image_id"] = SafelyNilPointer(candidate.BackgroundProfileImageId)
+	final_candidate["profile_image_id"] = SafelyNilPointer(candidate.ProfileImageId)
+	final_candidate["cv_document_id"] = SafelyNilPointer(candidate.CVDocumentId)
+
+	TransformsIdToPath([]string{
+		"background_profile_image_id",
+		"profile_image_id",
+		"cv_document_id",
+	}, final_candidate)
+
+	/* user */
+	if strings.Contains(queries, "user") {
+		final_candidate["user"] = gin.H{
+			"id":       candidate.User.Id,
+			"fullname": candidate.User.Fullname,
+			"email":    candidate.User.Email,
+		}
+	}
+	/* address */
+	if strings.Contains(queries, "address") {
+		if len(candidate.Addresses) != 0 {
+			addressMap := map[string]interface{}{
+				"id":           candidate.Addresses[0].ID,
+				"street":       candidate.Addresses[0].Street,
+				"neighborhood": candidate.Addresses[0].Neighborhood,
+				"rural_area":   candidate.Addresses[0].RuralArea,
+				"sub_district": candidate.Addresses[0].SubDistrict,
+				"city":         candidate.Addresses[0].City,
+				"province":     candidate.Addresses[0].Province,
+				"country":      candidate.Addresses[0].Country,
+				"postal_code":  candidate.Addresses[0].PostalCode,
+			}
+
+			final_candidate["address"] = addressMap
+		} else {
+			final_candidate["address"] = nil
+		}
+	}
+
+	/* skills */
+	if strings.Contains(queries, "skills") {
+		if len(candidate.Skills) != 0 {
+			skillsMap := []map[string]interface{}{}
+			for _, skill := range candidate.Skills {
+
+				skillsMap = append(skillsMap, map[string]interface{}{
+					"id":                    skill.ID,
+					"name":                  skill.Name,
+					"skill_icon_image_path": fmt.Sprintf("/api/v1/images/%d", skill.SkillIconImageId),
+				})
+			}
+
+			final_candidate["skills"] = skillsMap
+		} else {
+			final_candidate["skills"] = []interface{}{}
+		}
+	}
+
+	/* educations */
+	if strings.Contains(queries, "educations") {
+		if len(candidate.Educations) != 0 {
+			educationsMap := []map[string]interface{}{}
+			for _, education := range candidate.Educations {
+				educationsMap = append(educationsMap, map[string]interface{}{
+					"id":           education.ID,
+					"university":   education.University,
+					"major":        education.Major,
+					"degree":       education.Degree,
+					"address":      education.Address,
+					"is_graduated": education.IsGraduated,
+					"start_at":     education.StartAt,
+					"end_at":       education.EndAt,
+					"gpa":          education.GPA,
+				})
+			}
+
+			final_candidate["educations"] = educationsMap
+		} else {
+			final_candidate["educations"] = []interface{}{}
+		}
+	}
+
+	/* experiences */
+	if strings.Contains(queries, "experiences") {
+		if len(candidate.Experiences) != 0 {
+			experiencesMap := []map[string]interface{}{}
+			for _, experience := range candidate.Experiences {
+				experiencesMap = append(experiencesMap, map[string]interface{}{
+					"id":                     experience.ID,
+					"company_name":           experience.CompanyName,
+					"position":               experience.Position,
+					"location_address":       experience.LocationAddress,
+					"type":                   experience.Type,
+					"is_current":             experience.IsCurrent,
+					"start_at":               experience.StartAt,
+					"end_at":                 experience.EndAt,
+					"description":            experience.Description,
+					"attachment_document_id": SafelyNilPointer(experience.AttachmentDocumentId),
+				})
+
+			}
+
+			TransformsIdToPath([]string{
+				"attachment_document_id",
+			}, experiencesMap)
+
+			final_candidate["experiences"] = experiencesMap
+		} else {
+			final_candidate["experiences"] = []interface{}{}
+		}
+	}
+
+	/* socials */
+	if strings.Contains(queries, "socials") {
+		if len(candidate.CandidateSocials) != 0 {
+			socialsMap := []map[string]interface{}{}
+			for _, candidateSocial := range candidate.CandidateSocials {
+				icon_image_id := uint(candidateSocial.Social.IconImageId)
+				socialsMap = append(socialsMap, map[string]interface{}{
+					"id":              candidateSocial.Social.ID,
+					"name":            candidateSocial.Social.Name,
+					"url":             candidateSocial.Url,
+					"icon_image_path": fmt.Sprintf("/api/v1/images/%v", SafelyNilPointer(&icon_image_id)),
+				})
+			}
+
+			final_candidate["socials"] = socialsMap
+		} else {
+			final_candidate["socials"] = []interface{}{}
+		}
+	}
+
+	context.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    final_candidate,
+	})
+}
+func (c *CandidatesHandler) GetAll(context *gin.Context) {
 	queries, _ := context.GetQuery("includes")
 	gormDB, _ := initializer.GetGorm()
 	final_candidates := []map[string]any{}
@@ -1161,6 +1356,66 @@ func (c *CandidatesHandler) UnscopedById(context *gin.Context) {
 		"data":    unscoped_candidate,
 	})
 }
+func (c *CandidatesHandler) UserGet(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	var userData map[string]interface{}
+	errGetUserData := gormDB.Model(&models.User{}).
+		Select([]string{"id", "fullname", "email"}).
+		Where("id = ?", claims.Id).
+		First(&userData).Error
+
+	if errGetUserData != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   errGetUserData.Error(),
+			"message": "user data not found",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    userData,
+	})
+}
+
+func (c *CandidatesHandler) CheckProfile(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	profileStatus := map[string]bool{}
+	gormDB.Transaction(func(tx *gorm.DB) error {
+		var candidateID string
+		var count int64
+		errGetCandidateID := tx.Model(&models.Candidate{}).
+			Select("id").
+			Where("user_id = ?", claims.Id).
+			First(&candidateID).Error
+		if errGetCandidateID != nil {
+			profileStatus["candidate"] = false
+			profileStatus["educations"] = false
+			profileStatus["experiences"] = false
+			return nil
+		}
+		profileStatus["candidate"] = true
+		tx.Model(&models.Education{}).Where("candidate_id = ?", candidateID).Count(&count)
+		profileStatus["educations"] = count > 0
+		tx.Model(&models.Experience{}).Where("candidate_id = ?", candidateID).Count(&count)
+		profileStatus["experiences"] = count > 0
+		return nil
+	})
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    profileStatus,
+	})
+}
 
 /* ADDRESS */
 func (c *CandidatesHandler) StoreAddresses(context *gin.Context) {
@@ -1287,6 +1542,59 @@ func (c *CandidatesHandler) UpdateAddress(context *gin.Context) {
 	})
 }
 
+func (c *CandidatesHandler) AddressGet(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	var addressData map[string]interface{}
+	errGetAddress := gormDB.Transaction(func(tx *gorm.DB) error {
+		var candidateID string
+		errGetCanddateID := tx.Model(&models.Candidate{}).
+			Select("id").
+			Where("user_id = ?", claims.Id).
+			First(&candidateID).Error
+		if errGetCanddateID != nil {
+			return errGetCanddateID
+		}
+
+		errGetAddress := tx.Model(&models.CandidateAddress{}).
+			Select([]string{
+				"addresses.id",
+				"addresses.street",
+				"addresses.neighborhood",
+				"addresses.rural_area",
+				"addresses.sub_district",
+				"addresses.city",
+				"addresses.province",
+				"addresses.country",
+				"addresses.postal_code",
+			}).Joins("INNER JOIN addresses ON addresses.id = candidate_addresses.address_id").
+			Where("candidate_addresses.candidate_id = ? AND addresses.type = ?", candidateID, "home").
+			First(&addressData).Error
+		if errGetAddress != nil {
+			return errGetAddress
+		}
+		return nil
+	})
+
+	if errGetAddress != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   errGetAddress.Error(),
+			"message": "address not found",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    addressData,
+	})
+}
+
 func (c *CandidatesHandler) AddressGetById(context *gin.Context) {
 	param_addressId, _ := strconv.ParseUint(context.Param("id"), 10, 64)
 
@@ -1402,6 +1710,7 @@ func (c *CandidatesHandler) StoreEducations(context *gin.Context) {
 			University:  education.University,
 			Address:     education.Address,
 			Major:       education.Major,
+			Degree:      education.Degree,
 			IsGraduated: education.IsGraduated,
 			StartAt:     education.StartAt,
 			EndAt:       education.EndAt,
@@ -1480,6 +1789,56 @@ func (c *CandidatesHandler) UpdateEducation(context *gin.Context) {
 	})
 }
 
+func (c *CandidatesHandler) EducationsGet(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	var educationsData []map[string]interface{}
+	errGetEducations := gormDB.Transaction(func(tx *gorm.DB) error {
+		var candidateID string
+		errGetCandidateID := tx.Model(&models.Candidate{}).
+			Select("id").
+			Where("user_id = ?", claims.Id).
+			First(&candidateID).Error
+		if errGetCandidateID != nil {
+			return errGetCandidateID
+		}
+		getEducationRows := tx.Model(&models.Education{}).
+			Select([]string{
+				"id",
+				"university",
+				"address",
+				"major",
+				"degree",
+				"is_graduated",
+				"start_at",
+				"end_at",
+				"gpa",
+			}).Where("candidate_id = ?", candidateID).
+			Find(&educationsData)
+		if getEducationRows.RowsAffected == 0 {
+			return fmt.Errorf("no educations data found, %d rows result", getEducationRows.RowsAffected)
+		}
+		return nil
+	})
+	if errGetEducations != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   errGetEducations.Error(),
+			"message": "no educations data found",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    educationsData,
+	})
+}
+
 func (c *CandidatesHandler) EducationGetById(context *gin.Context) {
 	param_educationId := context.Param("id")
 
@@ -1543,7 +1902,7 @@ func (c *CandidatesHandler) StoreExperience(context *gin.Context) {
 	experienceForm := CreateExperienceForm{}
 	if errBind := context.ShouldBind(&experienceForm); errBind != nil {
 		context.JSON(http.StatusBadRequest, gin.H{
-			"success": true,
+			"success": false,
 			"error":   errBind.Error(),
 			"message": "double check your form-data fields, kids",
 		})
@@ -1582,8 +1941,6 @@ func (c *CandidatesHandler) StoreExperience(context *gin.Context) {
 	} else {
 		m_experience.EndAt = experienceForm.EndAt
 	}
-
-	log.Println("end at t:", m_experience.EndAt)
 
 	for i := 0; i < DOCUMENT_COUNT; i++ {
 		data := <-ch_storeDocument
@@ -1624,8 +1981,8 @@ func (c *CandidatesHandler) StoreExperience(context *gin.Context) {
 	context.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"message":                    "experience stored successfully",
-			"attachment_document_status": store_document_status,
+			"message":         "experience stored successfully",
+			"document_status": store_document_status,
 		},
 	})
 }
@@ -1708,11 +2065,63 @@ func (c *CandidatesHandler) UpdateExperience(context *gin.Context) {
 	context.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"update_document_status": attachment_document_status,
-			"message":                fmt.Sprintf("%v experience updated successfully", updateExperience.RowsAffected),
+			"document_status": attachment_document_status,
+			"message":         fmt.Sprintf("%v experience updated successfully", updateExperience.RowsAffected),
 		},
 	})
 }
+
+func (c *CandidatesHandler) ExperiencesGet(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	var experiencesData []map[string]interface{}
+	errGetExperiences := gormDB.Transaction(func(tx *gorm.DB) error {
+		var candidateID string
+		errGetCandidateID := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", claims.Id).First(&candidateID).Error
+		if errGetCandidateID != nil {
+			return errGetCandidateID
+		}
+
+		getExperienceRows := tx.Model(&models.Experience{}).Select([]string{
+			"id",
+			"company_name",
+			"position",
+			"type",
+			"location_address",
+			"is_current",
+			"start_at",
+			"end_at",
+			"description",
+			"attachment_document_id",
+		}).Where("candidate_id = ?", candidateID).
+			Find(&experiencesData)
+		if getExperienceRows.RowsAffected == 0 {
+			return fmt.Errorf("no experiences data found, %d rows result", getExperienceRows.RowsAffected)
+		}
+		return nil
+	})
+
+	if errGetExperiences != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   errGetExperiences.Error(),
+			"message": "experiences data not found",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	TransformsIdToPath([]string{"attachment_document_id"}, experiencesData)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    experiencesData,
+	})
+}
+
 func (c *CandidatesHandler) ExperienceGetById(context *gin.Context) {
 	experienceId, errParseUint := strconv.ParseUint(context.Param("id"), 10, 32)
 	if errParseUint != nil {
@@ -1819,12 +2228,12 @@ func (c *CandidatesHandler) StoreCandidateSocial(context *gin.Context) {
 	bearerToken := strings.TrimPrefix(context.GetHeader("Authorization"), "Bearer ")
 	claims := ParseJWT(bearerToken)
 
-	candidateSocialsData := CandidateSocialForm{}
-	if errBind := context.ShouldBind(&candidateSocialsData); errBind != nil {
+	candidateSocialsData := []CandidateSocialForm{}
+	if errBind := context.ShouldBindJSON(&candidateSocialsData); errBind != nil {
 		context.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   errBind.Error(),
-			"message": "double check your Form-Data fields, kids",
+			"message": "double check your JSON fields, kids",
 		})
 
 		context.Abort()
@@ -1840,12 +2249,15 @@ func (c *CandidatesHandler) StoreCandidateSocial(context *gin.Context) {
 			return errGetCandidateId
 		}
 
-		m_candidateSocial := models.CandidateSocial{
-			CandidateId: candidate["id"].(string),
-			SocialId:    candidateSocialsData.SocialId,
-			Url:         candidateSocialsData.Url,
-			CreatedAt:   timeNow,
-			UpdatedAt:   &timeNow,
+		m_candidateSocial := []models.CandidateSocial{}
+		for _, social := range candidateSocialsData {
+			m_candidateSocial = append(m_candidateSocial, models.CandidateSocial{
+				CandidateId: candidate["id"].(string),
+				SocialId:    social.SocialId,
+				Url:         social.Url,
+				CreatedAt:   timeNow,
+				UpdatedAt:   &timeNow,
+			})
 		}
 		errStoreCandidateSocials := tx.Create(&m_candidateSocial).Error
 		if errStoreCandidateSocials != nil {
@@ -1868,7 +2280,57 @@ func (c *CandidatesHandler) StoreCandidateSocial(context *gin.Context) {
 
 	context.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    "candidate social stored successfully",
+		"data":    fmt.Sprintf("%v candidate social stored successfully", len(candidateSocialsData)),
+	})
+}
+
+func (c *CandidatesHandler) SocialsGet(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	var socialsData []map[string]interface{}
+	errGetSocials := gormDB.Transaction(func(tx *gorm.DB) error {
+		var candidateID string
+		errGetCandidateID := tx.Model(&models.Candidate{}).
+			Select("id").
+			Where("user_id = ?", claims.Id).
+			First(&candidateID).Error
+		if errGetCandidateID != nil {
+			return errGetCandidateID
+		}
+
+		getSocialRows := tx.Model(&models.CandidateSocial{}).
+			Select([]string{
+				"candidate_socials.url",
+				"socials.id",
+				"socials.name",
+				"socials.icon_image_id",
+			}).Joins("INNER JOIN socials ON socials.id = candidate_socials.social_id").
+			Where("candidate_socials.candidate_id = ?", candidateID).
+			Find(&socialsData)
+		if getSocialRows.RowsAffected == 0 {
+			return fmt.Errorf("no socials data found, %d rows result", getSocialRows.RowsAffected)
+		}
+		return nil
+	})
+
+	if errGetSocials != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   errGetSocials.Error(),
+			"message": "no socials data found",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	TransformsIdToPath([]string{"icon_image_id"}, socialsData)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    socialsData,
 	})
 }
 
@@ -1877,10 +2339,10 @@ func (c *CandidatesHandler) UpdateCandidateSocial(context *gin.Context) {
 	claims := ParseJWT(bearerToken)
 
 	candidateSocialFields := struct {
-		SocialId uint   `form:"social_id" binding:"required"`
-		Url      string `form:"url"`
+		SocialId uint   `json:"social_id" binding:"required"`
+		Url      string `json:"url"`
 	}{}
-	if errBind := context.ShouldBind(&candidateSocialFields); errBind != nil {
+	if errBind := context.ShouldBindJSON(&candidateSocialFields); errBind != nil {
 		context.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   errBind.Error(),
@@ -1978,15 +2440,15 @@ func (c *CandidatesHandler) CandidateSocialDeleteById(context *gin.Context) {
 
 /* SKILL */
 func (c *CandidatesHandler) StoreCandidateSkill(context *gin.Context) {
-	candidateSkill := struct {
-		SkillId uint `form:"skill_id" binding:"required"`
+	candidateSkill := []struct {
+		SkillId uint `json:"skill_id" binding:"required"`
 	}{}
 
-	if errBind := context.ShouldBind(&candidateSkill); errBind != nil {
+	if errBind := context.ShouldBindJSON(&candidateSkill); errBind != nil {
 		context.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   errBind.Error(),
-			"message": "double check your Form-Data fields, kids",
+			"message": "double check your JSON fields, kids",
 		})
 
 		context.Abort()
@@ -2005,12 +2467,16 @@ func (c *CandidatesHandler) StoreCandidateSkill(context *gin.Context) {
 		}
 
 		timeNow := time.Now()
-		m_candidateSkill := models.CandidateSkill{
-			CandidateId: candidate["id"].(string),
-			SkillId:     candidateSkill.SkillId,
-			CreatedAt:   timeNow,
-			UpdatedAt:   &timeNow,
+		m_candidateSkill := []models.CandidateSkill{}
+		for _, skill := range candidateSkill {
+			m_candidateSkill = append(m_candidateSkill, models.CandidateSkill{
+				CandidateId: candidate["id"].(string),
+				SkillId:     skill.SkillId,
+				CreatedAt:   timeNow,
+				UpdatedAt:   &timeNow,
+			})
 		}
+
 		errCreating := tx.Create(&m_candidateSkill).Error
 		if errCreating != nil {
 			return errCreating
@@ -2023,7 +2489,7 @@ func (c *CandidatesHandler) StoreCandidateSkill(context *gin.Context) {
 		context.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   errCreateCandidateSkill.Error(),
-			"message": fmt.Sprintf("failed creating candidateSkill with skillId %v", candidateSkill.SkillId),
+			"message": "error database operation",
 		})
 
 		context.Abort()
@@ -2032,7 +2498,57 @@ func (c *CandidatesHandler) StoreCandidateSkill(context *gin.Context) {
 
 	context.JSON(http.StatusCreated, gin.H{
 		"success": true,
-		"data":    fmt.Sprintf("candidateSkill with skillId %v stored successfully", candidateSkill.SkillId),
+		"data":    fmt.Sprintf("%v candidate skills stored successfully", len(candidateSkill)),
+	})
+}
+
+func (c *CandidatesHandler) SkillsGet(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	var skillsData []map[string]interface{}
+	errGetSkills := gormDB.Transaction(func(tx *gorm.DB) error {
+		var candidateID string
+		errGetCandidateID := tx.Model(&models.Candidate{}).
+			Select("id").
+			Where("user_id = ?", claims.Id).
+			First(&candidateID).Error
+		if errGetCandidateID != nil {
+			return errGetCandidateID
+		}
+
+		getSkillRows := tx.Model(&models.CandidateSkill{}).
+			Select([]string{
+				"skills.id",
+				"skills.name",
+				"skills.skill_icon_image_id",
+			}).Joins("INNER JOIN skills ON skills.id = candidate_skills.skill_id").
+			Where("candidate_skills.candidate_id = ?", candidateID).
+			Find(&skillsData)
+
+		if getSkillRows.RowsAffected == 0 {
+			return fmt.Errorf("no skills data found, %d rows result", getSkillRows.RowsAffected)
+		}
+		return nil
+	})
+
+	TransformsIdToPath([]string{"skill_icon_image_id"}, skillsData)
+
+	if errGetSkills != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   errGetSkills.Error(),
+			"message": "no skills data found",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    skillsData,
 	})
 }
 

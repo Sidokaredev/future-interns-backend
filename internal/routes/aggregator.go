@@ -2,16 +2,6 @@ package routes
 
 import "github.com/gin-gonic/gin"
 
-const (
-	MethodGet     = "GET"
-	MethodPost    = "POST"
-	MethodPut     = "PUT"
-	MethodDelete  = "DELETE"
-	MethodPatch   = "PATCH"
-	MethodHead    = "HEAD"
-	MethodOptions = "OPTIONS"
-)
-
 func LoadRoutes(engine *gin.Engine) {
 	/* Global Middleware */
 
@@ -25,4 +15,5 @@ func LoadRoutes(engine *gin.Engine) {
 	ImageRoutes(apiv1)
 	RoleRoutes(apiv1)
 	PermissionRoutes(apiv1)
+	PublicRoutes(apiv1)
 }

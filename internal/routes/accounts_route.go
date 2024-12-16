@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"future-interns-backend/internal/constants"
 	"future-interns-backend/internal/handlers"
 	"future-interns-backend/internal/middlewares"
 
@@ -13,10 +14,10 @@ func AccountsRoutes(apiv1 *gin.RouterGroup) {
 	router := apiv1.Group("/accounts")
 	/* use middleware here */
 	{
-		router.Handle(MethodPost, "/auth", accountHandlers.Auth)
-		router.Handle(MethodPost, "/create", accountHandlers.RegisterAccount)
-		router.Handle(MethodGet, "/identities", func(ctx *gin.Context) {})
-		router.Handle(MethodGet, "/identities/:id", func(ctx *gin.Context) {})
-		router.Handle(MethodGet, "/user-information", middlewares.AuthorizationWithBearer(), middlewares.RoleCheck(), accountHandlers.UserInformation)
+		router.Handle(constants.MethodPost, "/auth", accountHandlers.Auth)
+		router.Handle(constants.MethodPost, "/create", accountHandlers.RegisterAccount)
+		router.Handle(constants.MethodGet, "/identities", func(ctx *gin.Context) {})
+		router.Handle(constants.MethodGet, "/identities/:id", func(ctx *gin.Context) {})
+		router.Handle(constants.MethodGet, "/user-information", middlewares.AuthorizationWithBearer(), middlewares.RoleCheck(), accountHandlers.UserInformation)
 	}
 }

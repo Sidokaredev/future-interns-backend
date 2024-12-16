@@ -2,6 +2,7 @@ package internal
 
 import (
 	initializer "future-interns-backend/init"
+	"future-interns-backend/internal/middlewares"
 	"future-interns-backend/internal/routes"
 	"log"
 	"net/http"
@@ -18,7 +19,14 @@ func CreateServer(address string) {
 	}
 
 	engine := gin.New()
-	engine.Use(gin.Logger(), gin.Recovery())
+	engine.Use(gin.Logger(), gin.Recovery(), middlewares.CORSPolicy()) // global middlewares
+	// engine.Use(cors.New(cors.Config{
+	// 	AllowOrigins:     []string{"http://localhost:5173"},
+	// 	AllowMethods:     []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+	// 	AllowHeaders:     []string{"Authorization", "Origin", "Content-Type"},
+	// 	ExposeHeaders:    []string{"Content-Length"},
+	// 	AllowCredentials: true,
+	// }))
 
 	routes.LoadRoutes(engine)
 

@@ -118,9 +118,9 @@ func (h *AccountsHandler) Auth(context *gin.Context) {
 	if user.Error != nil {
 		message := fmt.Sprintf("account with email (%s) does not exist", auth.Email)
 		context.JSON(http.StatusBadRequest, gin.H{
-			"success":  false,
-			"error":    user.Error.Error(),
-			"messsage": message,
+			"success": false,
+			"error":   user.Error.Error(),
+			"message": message,
 		})
 		return
 	}
@@ -215,7 +215,7 @@ func (h *AccountsHandler) RegisterAccount(context *gin.Context) {
 		context.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   errTx.Error(),
-			"message": "database operation failed",
+			"message": errTx.Error(),
 		})
 		return
 	}

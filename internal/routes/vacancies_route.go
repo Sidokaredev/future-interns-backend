@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"future-interns-backend/internal/constants"
 	"future-interns-backend/internal/handlers"
 	"future-interns-backend/internal/middlewares"
 
@@ -14,6 +15,6 @@ func VacancyRoutes(apiv1 *gin.RouterGroup) {
 	/* middlewares */
 	router.Use(middlewares.AuthorizationWithBearer())
 	{
-		router.Handle(MethodGet, "/", vacancyHandlers.GetVacancies)
+		router.Handle(constants.MethodGet, "/", vacancyHandlers.GetVacancies)
 	}
 }

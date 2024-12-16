@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"future-interns-backend/internal/constants"
 	"future-interns-backend/internal/handlers"
 	"future-interns-backend/internal/middlewares"
 
@@ -14,6 +15,6 @@ func PermissionRoutes(apiv1 *gin.RouterGroup) {
 	/* middlewares */
 	router.Use(middlewares.AuthorizationWithBearer())
 	{
-		router.Handle(MethodPost, "/", permissionHandlers.CreatePermissions)
+		router.Handle(constants.MethodPost, "/", permissionHandlers.CreatePermissions)
 	}
 }

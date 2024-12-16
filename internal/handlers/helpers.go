@@ -7,6 +7,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -401,6 +402,15 @@ func TransformsIdToPath(targets []string, record interface{}) {
 					pathType = "documents"
 				}
 				if value, exists := data[target]; exists {
+					t := reflect.TypeOf(value)
+					v := reflect.ValueOf(value)
+					if t.Kind() == reflect.Ptr {
+						if !v.IsNil() {
+							value = v.Elem().Interface()
+						} else {
+							value = nil
+						}
+					}
 					if value != nil && value != 0 {
 						recordTyped[index][newKey] = fmt.Sprintf("/api/v1/%s/%v", pathType, value)
 					} else {

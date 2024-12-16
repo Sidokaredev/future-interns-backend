@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"future-interns-backend/internal/constants"
 	"future-interns-backend/internal/handlers"
 	"future-interns-backend/internal/middlewares"
 
@@ -18,10 +19,15 @@ func AdministratorRoutes(apiv1 *gin.RouterGroup) {
 	// use middlewares here
 	EmployerUser := routerUser.Group("/employers")
 	{
-		EmployerUser.Handle(MethodPost, "/", administratorHandlers.CreateEmployerUser)
-		EmployerUser.Handle(MethodPatch, "/", administratorHandlers.UpdateEmployerUser)
-		EmployerUser.Handle(MethodGet, "/:id", administratorHandlers.GetEmployerUserById)
-		EmployerUser.Handle(MethodDelete, "/:id", administratorHandlers.DeleteEmployerUserById)
-		EmployerUser.Handle(MethodGet, "/", administratorHandlers.ListEmployerUsers)
+		EmployerUser.Handle(constants.MethodPost, "/", administratorHandlers.CreateEmployerUser)
+		EmployerUser.Handle(constants.MethodPatch, "/", administratorHandlers.UpdateEmployerUser)
+		EmployerUser.Handle(constants.MethodGet, "/:id", administratorHandlers.GetEmployerUserById)
+		EmployerUser.Handle(constants.MethodDelete, "/:id", administratorHandlers.DeleteEmployerUserById)
+		EmployerUser.Handle(constants.MethodGet, "/", administratorHandlers.ListEmployerUsers)
+	}
+	EmployerSkill := router.Group("/skills")
+	{
+		EmployerSkill.Handle(constants.MethodPost, "/", administratorHandlers.CreateSkills)
+		EmployerSkill.Handle(constants.MethodDelete, "/:id", administratorHandlers.DeleteSkills)
 	}
 }
