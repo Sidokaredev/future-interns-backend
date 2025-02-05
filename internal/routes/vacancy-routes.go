@@ -9,7 +9,7 @@ import (
 
 func VacancyRoutes(apiv1 *gin.RouterGroup) {
 	handler := &handlers.VacancyHandler{}
-	apiv1.Use(middlewares.AuthorizationWithBearer())
+	apiv1.Use(middlewares.RequestLogs(), middlewares.AuthorizationWithBearer())
 	{
 		apiv1.Handle("GET", "/vacancies", handler.GetVacanciesCacheAside)
 	}

@@ -17,6 +17,13 @@ func main() {
 		panic(errMssql)
 	}
 
+	// gormDB, errGorm := initializer.GetMssqlDB()
+	// if errGorm != nil {
+	// 	log.Fatal(errGorm)
+	// }
+
+	// gormDB.AutoMigrate(&models.CacheSession{}, &models.RequestLog{})
+
 	if errRedis := initializer.RedisServerInit(); errRedis != nil {
 		panic(errRedis)
 	}

@@ -8,6 +8,7 @@ import (
 	"go-cache-aside-service/internal/models"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -88,7 +89,6 @@ func (handler *VacancyHandler) GetVacanciesCacheAside(ctx *gin.Context) {
 		ctx.Set("CACHE_MISS", true) // set cache miss
 		ctx.Set("CACHE_HIT", false) // set cache hit
 	} else {
-		log.Println("cached json \t:", cachedJSON)
 		if errDecode := json.Unmarshal([]byte(cachedJSON), &vacancies); errDecode != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
@@ -99,6 +99,21 @@ func (handler *VacancyHandler) GetVacanciesCacheAside(ctx *gin.Context) {
 			ctx.Abort()
 			return
 		}
+
+		ctx.Set("CACHE_MISS", false) // set cache miss
+		ctx.Set("CACHE_HIT", true)   // set cache hit
+
+		log.Println("go for cached vacancies...")
+		ctx.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data": gin.H{
+				"applied":   applied,
+				"vacancies": vacancies,
+			},
+		})
+
+		ctx.Abort()
+		return
 	}
 
 	// sqlqueryCandidateProfile := `
@@ -156,7 +171,7 @@ func (handler *VacancyHandler) GetVacanciesCacheAside(ctx *gin.Context) {
       vacancies.sla,
       vacancies.is_inactive,
       vacancies.created_at,
-      employers.id,
+      employers.id AS employer_id,
       employers.name,
       employers.legal_name,
       employers.location,
@@ -169,13 +184,9 @@ func (handler *VacancyHandler) GetVacanciesCacheAside(ctx *gin.Context) {
       AND
       vacancies.deleted_at IS NULL
     ORDER BY
-      vacancies.created_at ASC
+      vacancies.created_at DESC
   `
-
-	// var candidateProfiles map[string]interface{}
-
 	getVacancies := gormDB.Raw(sqlQueryVacancies, false).Scan(&vacancies)
-
 	if getVacancies.Error != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -187,54 +198,8 @@ func (handler *VacancyHandler) GetVacanciesCacheAside(ctx *gin.Context) {
 		return
 	}
 
-	// if educationsJSON, ok := candidateProfiles["educations"].(string); ok {
-	// 	var educations []map[string]interface{}
-	// 	if errDecode := json.Unmarshal([]byte(educationsJSON), &educations); errDecode != nil {
-	// 		ctx.JSON(http.StatusInternalServerError, gin.H{
-	// 			"success": false,
-	// 			"error":   errDecode.Error(),
-	// 			"message": "fail unmarshall educations JSON",
-	// 		})
-
-	// 		ctx.Abort()
-	// 		return
-	// 	}
-
-	// 	candidateProfiles["educations"] = educations
-	// }
-	// if skillsJSON, ok := candidateProfiles["skills"].(string); ok {
-	// 	var skills []map[string]interface{}
-	// 	if errDecode := json.Unmarshal([]byte(skillsJSON), &skills); errDecode != nil {
-	// 		ctx.JSON(http.StatusInternalServerError, gin.H{
-	// 			"success": false,
-	// 			"error":   errDecode.Error(),
-	// 			"message": "fail unmarshall skills JSON",
-	// 		})
-
-	// 		ctx.Abort()
-	// 		return
-	// 	}
-
-	// 	candidateProfiles["skills"] = skills
-	// }
-	// if experiencesJSON, ok := candidateProfiles["experiences"].(string); ok {
-	// 	var experiences []map[string]interface{}
-	// 	if errDecode := json.Unmarshal([]byte(experiencesJSON), &experiences); errDecode != nil {
-	// 		ctx.JSON(http.StatusInternalServerError, gin.H{
-	// 			"success": false,
-	// 			"error":   errDecode.Error(),
-	// 			"message": "fail unmarshall experiences JSON",
-	// 		})
-
-	// 		ctx.Abort()
-	// 		return
-	// 	}
-
-	// 	candidateProfiles["experiences"] = experiences
-	// }
-
 	employerKeys := []string{
-		"id",
+		"employer_id",
 		"name",
 		"legal_name",
 		"location",
@@ -243,6 +208,11 @@ func (handler *VacancyHandler) GetVacanciesCacheAside(ctx *gin.Context) {
 	for _, vacancy := range vacancies {
 		employer := map[string]interface{}{}
 		for _, key := range employerKeys {
+			if key == "employer_id" {
+				employer["id"] = vacancy[key]
+				delete(vacancy, key)
+				continue
+			}
 			employer[key] = vacancy[key]
 			delete(vacancy, key)
 		}
@@ -250,9 +220,38 @@ func (handler *VacancyHandler) GetVacanciesCacheAside(ctx *gin.Context) {
 		vacancy["employer"] = employer
 	}
 
+	vacanciesEncoded, errEncode := json.Marshal(vacancies)
+	if errEncode != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errEncode.Error(),
+			"message": "fail while encoding vacancies to JSON",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	expiration := 2 * time.Hour
+	errSetCached := rdb.Set(c, claim.(string), string(vacanciesEncoded), expiration).Err()
+	if errSetCached != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errSetCached.Error(),
+			"message": "fail while storing vacancies to Redis",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	log.Println("go for non-cached vacancies...")
+
 	ctx.JSON(http.StatusOK, gin.H{
-		"success":   true,
-		"applied":   applied,
-		"vacancies": vacancies,
+		"success": true,
+		"data": gin.H{
+			"applied":   applied,
+			"vacancies": vacancies,
+		},
 	})
 }
