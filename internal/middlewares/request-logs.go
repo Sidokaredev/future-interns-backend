@@ -42,8 +42,6 @@ func RequestLogs() gin.HandlerFunc {
 			return
 		}
 
-		totalRequest.Add(1) // count request
-
 		debug.SetGCPercent(-1) // stopping automatic garbage collection
 
 		startTimeRequest := time.Now() // capturing starting time of request
@@ -53,8 +51,12 @@ func RequestLogs() gin.HandlerFunc {
 
 		ctx.Next()
 
+		if ctx.Writer.Status() != http.StatusOK {
+			ctx.Abort() // Hentikan eksekusi jika bukan 200
+			return
+		}
+
 		cpuUsage, _ := cpu.Percent(0, false)
-		log.Println("cpu usage \t:", cpuUsage[0])
 
 		responseTime := time.Since(startTimeRequest) // capturing response time
 
@@ -85,6 +87,8 @@ func RequestLogs() gin.HandlerFunc {
 		if errHSet != nil {
 			panic(errHSet)
 		}
+
+		totalRequest.Add(1) // count request
 
 		if totalRequest.Load() == 20 {
 			cursor := uint64(0)

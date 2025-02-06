@@ -28,6 +28,8 @@ func main() {
 		panic(errRedis)
 	}
 
+	gin.SetMode(gin.ReleaseMode)
+
 	engine := gin.New()
 	engine.Use(gin.Logger(), gin.Recovery(), middlewares.CORSPolicy())
 
