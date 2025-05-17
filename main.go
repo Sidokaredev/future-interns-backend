@@ -4,6 +4,7 @@ import (
 	initializer "go-cache-aside-service/init"
 	"go-cache-aside-service/internal/middlewares"
 	"go-cache-aside-service/internal/routes"
+	"log"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,14 +18,8 @@ func main() {
 		panic(errMssql)
 	}
 
-	// gormDB, errGorm := initializer.GetMssqlDB()
-	// if errGorm != nil {
-	// 	log.Fatal(errGorm)
-	// }
-
-	// gormDB.AutoMigrate(&models.CacheSession{}, &models.RequestLog{})
-
 	if errRedis := initializer.RedisServerInit(); errRedis != nil {
+		log.Println("redis :" + errRedis.Error())
 		panic(errRedis)
 	}
 

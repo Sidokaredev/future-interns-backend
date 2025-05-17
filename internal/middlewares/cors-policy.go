@@ -8,12 +8,20 @@ import (
 
 func CORSPolicy() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		// var mStart runtime.MemStats
-		// runtime.ReadMemStats(&mStart)
-
-		ctx.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		origin := ctx.GetHeader("Origin")
+		whitelisted := []string{
+			"http://localhost:5173",
+			"https://sidokaredev.github.io",
+			"http://54.198.53.107",
+			"http://192.168.144.152",
+		}
+		for _, host := range whitelisted {
+			if origin == host {
+				ctx.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			}
+		}
 		ctx.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		ctx.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		ctx.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Measure-Cache-Request-Logs, X-Cache-Session")
 		ctx.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 
 		if ctx.Request.Method == "OPTIONS" {
@@ -22,25 +30,5 @@ func CORSPolicy() gin.HandlerFunc {
 		}
 
 		ctx.Next()
-
-		// var mEnd runtime.MemStats
-		// runtime.ReadMemStats(&mEnd)
-
-		// memUsedMB := float64(mEnd.Alloc - mStart.Alloc)
-		// rdb, err := initializer.GetRedisDB()
-		// if err != nil {
-		// 	log.Println("err redis database")
-		// 	ctx.Abort()
-		// 	return
-		// }
-
-		// c := context.Background()
-		// errSetKey := rdb.Set(c, "memused", memUsedMB, 0).Err()
-		// if errSetKey != nil {
-		// 	log.Println("failed to set memused")
-		// 	ctx.Abort()
-
-		// 	return
-		// }
 	}
 }

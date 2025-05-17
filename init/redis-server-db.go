@@ -17,6 +17,7 @@ var (
 func RedisServerInit() error {
 	var redisconfig struct {
 		Address  string
+		Username string
 		Password string
 		Database int
 		Protocol int
@@ -28,10 +29,21 @@ func RedisServerInit() error {
 
 	redisDB = redis.NewClient(&redis.Options{
 		Addr:     redisconfig.Address,
+		Username: redisconfig.Username,
 		Password: redisconfig.Password,
 		DB:       redisconfig.Database,
 		Protocol: redisconfig.Protocol,
 	})
+	// redisDB := redis.NewClusterClient(&redis.ClusterOptions{
+	// 	Addrs: []string{
+	// 		redisconfig.Address,
+	// 	},
+	// 	Password: "",
+
+	// 	TLSConfig: &tls.Config{
+	// 		InsecureSkipVerify: true,
+	// 	},
+	// })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

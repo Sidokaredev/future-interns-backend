@@ -11,6 +11,9 @@ func VacancyRoutes(apiv1 *gin.RouterGroup) {
 	handler := &handlers.VacancyHandler{}
 	apiv1.Use(middlewares.RequestLogs(), middlewares.AuthorizationWithBearer())
 	{
-		apiv1.Handle("GET", "/vacancies", handler.GetVacanciesCacheAside)
+		// apiv1.Handle("GET", "/vacancies", handler.ReadCacheAsideVacancies)
+		apiv1.Handle("POST", "/vacancies", handler.WriteVacanciesCacheAside)
+		apiv1.Handle("GET", "/vacancies", handler.ReadCacheAsideService)
+		apiv1.Handle("PATCH", "/vacancies", handler.UpdateVacanciesCacheAside)
 	}
 }

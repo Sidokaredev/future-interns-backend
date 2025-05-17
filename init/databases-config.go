@@ -13,6 +13,7 @@ func LoadAppConfig() error {
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err != nil {
+		log.Println("viper err load config!!!")
 		return err
 	}
 	log.Println("databases.yaml loaded ...")
