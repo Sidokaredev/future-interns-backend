@@ -12,7 +12,7 @@ func CandidateRoutes(apiv1 *gin.RouterGroup) {
 	candidateHandlers := &handlers.CandidatesHandler{}
 
 	router := apiv1.Group("/candidates")
-	router.Use(middlewares.AuthorizationWithBearer())
+	router.Use(middlewares.AuthorizationWithBearer(), middlewares.RoleCheck())
 	{
 		router.Handle(constants.MethodPost, "/", candidateHandlers.Create)
 		router.Handle(constants.MethodPatch, "/", candidateHandlers.Update)
@@ -64,6 +64,10 @@ func CandidateRoutes(apiv1 *gin.RouterGroup) {
 	routerPipeline := router.Group("/pipelines")
 	{
 		routerPipeline.Handle(constants.MethodPost, "/", candidateHandlers.CreatePipeline)
+		routerPipeline.Handle(constants.MethodGet, "/", candidateHandlers.ListPipeline)
+		routerPipeline.Handle(constants.MethodGet, "/:pipelineID/assessments/:vacancyID", candidateHandlers.GetPipelineAssessments)
+		routerPipeline.Handle(constants.MethodGet, "/:pipelineID/vacancies/:vacancyID/interviews", candidateHandlers.GetPipelineInterviews)
+		routerPipeline.Handle(constants.MethodGet, "/:pipelineID/vacancies/:vacancyID/offering", candidateHandlers.GetPipelineOfferings)
 	}
 	routerAssessment := router.Group("/assessments")
 	{
@@ -74,6 +78,10 @@ func CandidateRoutes(apiv1 *gin.RouterGroup) {
 		routerAssessmentSubmission.Handle(constants.MethodPost, "/", candidateHandlers.StoreAssessmentSubmissions)
 		routerAssessmentSubmission.Handle(constants.MethodDelete, "/:id", candidateHandlers.DeleteAssessmentSubmission)
 	}
+	// routerInterview := router.Group("/interviews")
+	// {
+	// 	routerInterview.Handle(constants.MethodGet, "/", candidateHandlers.GetPipelineInterviews)
+	// }
 	routerOffering := router.Group("/offerings")
 	{
 		routerOffering.Handle(constants.MethodPatch, "/:id", candidateHandlers.UpdateOffering)

@@ -16,8 +16,12 @@ func AccountsRoutes(apiv1 *gin.RouterGroup) {
 	{
 		router.Handle(constants.MethodPost, "/auth", accountHandlers.Auth)
 		router.Handle(constants.MethodPost, "/create", accountHandlers.RegisterAccount)
+		router.Handle(constants.MethodGet, "/user-role", middlewares.AuthorizationWithBearer(), accountHandlers.UserRole)
 		router.Handle(constants.MethodGet, "/identities", func(ctx *gin.Context) {})
 		router.Handle(constants.MethodGet, "/identities/:id", func(ctx *gin.Context) {})
 		router.Handle(constants.MethodGet, "/user-information", middlewares.AuthorizationWithBearer(), middlewares.RoleCheck(), accountHandlers.UserInformation)
+		router.Handle(constants.MethodGet, "/user-account", middlewares.AuthorizationWithBearer(), middlewares.RoleCheck(), accountHandlers.UserAccountInfo)
+		router.Handle(constants.MethodPost, "/make", accountHandlers.MakeAccount)
+		router.Handle(constants.MethodPost, "/make/random", accountHandlers.MakeRandomAccounts)
 	}
 }

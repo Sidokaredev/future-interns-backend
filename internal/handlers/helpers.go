@@ -402,15 +402,15 @@ func TransformsIdToPath(targets []string, record interface{}) {
 					pathType = "documents"
 				}
 				if value, exists := data[target]; exists {
-					t := reflect.TypeOf(value)
 					v := reflect.ValueOf(value)
-					if t.Kind() == reflect.Ptr {
+					if v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
 						if !v.IsNil() {
 							value = v.Elem().Interface()
 						} else {
 							value = nil
 						}
 					}
+
 					if value != nil && value != 0 {
 						recordTyped[index][newKey] = fmt.Sprintf("/api/v1/%s/%v", pathType, value)
 					} else {
@@ -430,6 +430,14 @@ func TransformsIdToPath(targets []string, record interface{}) {
 				pathType = "documents"
 			}
 			if value, exists := recordTyped[target]; exists {
+				v := reflect.ValueOf(value)
+				if v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+					if !v.IsNil() {
+						value = v.Elem().Interface()
+					} else {
+						value = nil
+					}
+				}
 				if value != nil && value != 0 {
 					recordTyped[newKey] = fmt.Sprintf("/api/v1/%s/%v", pathType, value)
 				} else {
@@ -462,14 +470,16 @@ func SafelyNilPointerV2(v *interface{}) interface{} {
 func SLAGuard(vacancyId string, tx *gorm.DB) error {
 	expirationGuard := tx.Exec(`
 		UPDATE vacancies
-		SET sla = CASE
-								WHEN sla != 0 THEN sla - DATEDIFF(HOUR, created_at, GETDATE())
-								ELSE sla
+			SET sla = CASE
+								WHEN is_inactive = 1 THEN 0
+								WHEN sla > 0 THEN sla - DATEDIFF(HOUR, updated_at, GETDATE())
+								ELSE 0
 							END,
 				is_inactive = CASE
 												WHEN sla = 0 THEN 1
 												ELse is_inactive
-											END
+											END,
+				updated_at = GETDATE()
 		WHERE id = ? 
 	`, vacancyId)
 

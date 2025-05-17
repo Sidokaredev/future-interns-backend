@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/url"
 	"sync"
 	"time"
 
@@ -55,12 +56,13 @@ func MssqlInit() error {
 }
 
 func GormSQLServerInit() error {
-	if err := viper.UnmarshalKey("databases.dev", &dbconfig); err != nil {
+	if err := viper.UnmarshalKey("databases.testing", &dbconfig); err != nil {
+		// if err := viper.UnmarshalKey("databases.dev", &dbconfig); err != nil {
 		panic(err)
 	}
 
 	once.Do(func() {
-		dsn := fmt.Sprintf("sqlserver://%s:%s@%s:%d?database=%s", dbconfig.Username, dbconfig.Password, dbconfig.Host, dbconfig.Port, dbconfig.Database)
+		dsn := fmt.Sprintf("sqlserver://%s:%s@%s:%d?database=%s", dbconfig.Username, url.QueryEscape(dbconfig.Password), dbconfig.Host, dbconfig.Port, dbconfig.Database)
 
 		gormsqldb, errDB = gorm.Open(sqlserver.Open(dsn), &gorm.Config{TranslateError: true})
 		if errDB != nil {

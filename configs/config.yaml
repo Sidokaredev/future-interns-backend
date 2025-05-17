@@ -1,10 +1,17 @@
 databases:
   dev:
-    username: adm_futureinterns
-    password: passfutureinterns
-    host: localhost
+    username: sa
+    password: euPK#sp8[dL!(4M/m+*AYk]~fvZ;rN>g
+    host: app-mssql_server-1
     port: 1433
-    instance: sidokaredev
+    database: future_interns
+    connectionTimeout: 5
+    encrypt: false
+  testing:
+    username: sa
+    password: mssql-server-2-pass
+    host: 192.168.144.152
+    port: 1433
     database: future_interns
     connectionTimeout: 5
     encrypt: false

@@ -107,7 +107,7 @@ type CreateAssessmentForm struct {
 	Name           string    `form:"name" binding:"required"`
 	Note           string    `form:"note" binding:"required"`
 	AssessmentLink *string   `form:"assessment_link"`
-	StartDate      time.Time `form:"start_date" binding:"required"`
+	StartDate      time.Time `form:"start_at" binding:"required"`
 	DueDate        time.Time `form:"due_date" binding:"required"`
 	VacancyId      string    `form:"vacancy_id" binding:"required"`
 }
@@ -116,7 +116,7 @@ type UpdateAssessmentForm struct {
 	Name           *string    `form:"name"`
 	Note           *string    `form:"note"`
 	AssessmentLink *string    `form:"assessment_link"`
-	StartDate      *time.Time `form:"start_date"`
+	StartDate      *time.Time `form:"start_at"`
 	DueDate        *time.Time `form:"due_date"`
 }
 
@@ -139,6 +139,52 @@ type UpdateInterviewForm struct {
 }
 
 /* EMPLOYER */
+func (e EmployerHandlers) CheckProfile(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	profileStatus := map[string]bool{}
+	gormDB.Transaction(func(tx *gorm.DB) error {
+		var employerID string
+		errGetEmployer := tx.Model(&models.Employer{}).Select([]string{"id"}).Where("user_id = ?", claims.Id).First(&employerID).Error
+		if errGetEmployer != nil {
+			profileStatus["employer"] = false
+			profileStatus["headquarters"] = false
+			profileStatus["office_images"] = false
+			return nil
+		}
+		var totalHeadquarters int64
+		tx.Model(&models.Headquarter{}).Where("employer_id = ?", employerID).Count(&totalHeadquarters)
+		if totalHeadquarters == 0 {
+			profileStatus["employer"] = true
+			profileStatus["headquarters"] = false
+			profileStatus["office_images"] = false
+
+			return nil
+		}
+		var totalOfficeImages int64
+		tx.Model(&models.OfficeImage{}).Where("employer_id = ?", employerID).Count(&totalOfficeImages)
+		if totalOfficeImages == 0 {
+			profileStatus["employer"] = true
+			profileStatus["headquarters"] = true
+			profileStatus["office_images"] = false
+
+			return nil
+		}
+
+		profileStatus["employer"] = true
+		profileStatus["headquarters"] = true
+		profileStatus["office_images"] = true
+		return nil
+	})
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    profileStatus,
+	})
+}
+
 func (e *EmployerHandlers) StoreEmployer(context *gin.Context) {
 	/*
 		check permissions here
@@ -491,6 +537,7 @@ func (e *EmployerHandlers) GetEmployer(ctx *gin.Context) {
 			db = db.Preload("EmployerSocials.Social")
 		}
 
+		m_employer.Id = employer["id"].(string)
 		errSearchEmployer := db.First(&m_employer).Error
 		if errSearchEmployer != nil {
 			return errSearchEmployer
@@ -524,8 +571,8 @@ func (e *EmployerHandlers) GetEmployer(ctx *gin.Context) {
 		"description":                 m_employer.Description,
 		"background_profile_image_id": SafelyNilPointer(m_employer.BackgroundProfileImageId),
 		"profile_image_id":            SafelyNilPointer(m_employer.ProfileImageId),
-		"headquarters":                []gin.H{},
-		"socials":                     []map[string]interface{}{},
+		// "headquarters":                []gin.H{},
+		// "socials":                     []map[string]interface{}{},
 	}
 
 	TransformsIdToPath([]string{
@@ -541,31 +588,35 @@ func (e *EmployerHandlers) GetEmployer(ctx *gin.Context) {
 		}
 	}
 
-	for _, headquarter := range m_employer.Headquarters {
-		employerMap["headquarters"] = append(employerMap["headquarters"].([]gin.H), gin.H{
-			"address_id": headquarter.AddressId,
-			"name":       headquarter.Name,
-			"type":       headquarter.Type,
-			"address": gin.H{
-				"street":       headquarter.Address.Street,
-				"neighborhood": headquarter.Address.Neighborhood,
-				"rural_area":   headquarter.Address.RuralArea,
-				"sub_district": headquarter.Address.SubDistrict,
-				"city":         headquarter.Address.City,
-				"province":     headquarter.Address.Province,
-				"country":      headquarter.Address.Country,
-				"postal_code":  headquarter.Address.PostalCode,
-				"type":         headquarter.Address.Type,
-			},
-		})
+	if len(m_employer.Headquarters) != 0 {
+		for _, headquarter := range m_employer.Headquarters {
+			employerMap["headquarters"] = append(employerMap["headquarters"].([]gin.H), gin.H{
+				"address_id": headquarter.AddressId,
+				"name":       headquarter.Name,
+				"type":       headquarter.Type,
+				"address": gin.H{
+					"street":       headquarter.Address.Street,
+					"neighborhood": headquarter.Address.Neighborhood,
+					"rural_area":   headquarter.Address.RuralArea,
+					"sub_district": headquarter.Address.SubDistrict,
+					"city":         headquarter.Address.City,
+					"province":     headquarter.Address.Province,
+					"country":      headquarter.Address.Country,
+					"postal_code":  headquarter.Address.PostalCode,
+					"type":         headquarter.Address.Type,
+				},
+			})
+		}
 	}
 
-	for _, social := range m_employer.EmployerSocials {
-		employerMap["socials"] = append(employerMap["socials"].([]map[string]interface{}), map[string]interface{}{
-			"name":          social.Social.Name,
-			"url":           social.Url,
-			"icon_image_id": social.Social.IconImageId,
-		})
+	if len(m_employer.Socials) != 0 {
+		for _, social := range m_employer.EmployerSocials {
+			employerMap["socials"] = append(employerMap["socials"].([]map[string]interface{}), map[string]interface{}{
+				"name":          social.Social.Name,
+				"url":           social.Url,
+				"icon_image_id": social.Social.IconImageId,
+			})
+		}
 	}
 
 	TransformsIdToPath([]string{"icon_image_id"}, employerMap["socials"])
@@ -679,7 +730,7 @@ func (e *EmployerHandlers) StoreHeadquarter(ctx *gin.Context) {
 			EmployerId: employer["id"].(string),
 			AddressId:  m_address.ID,
 			Name:       headquarterForm.Name,
-			Type:       "branch",
+			Type:       headquarterForm.Type,
 			CreatedAt:  time.Now(),
 		}
 		errCreateHeadquarter := tx.Create(&m_headquarter).Error
@@ -703,9 +754,7 @@ func (e *EmployerHandlers) StoreHeadquarter(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusCreated, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": "headquarter created successfully",
-		},
+		"data":    "headquarter created successfully",
 	})
 }
 
@@ -782,9 +831,7 @@ func (e *EmployerHandlers) UpdateHeadquarter(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": "headquarter updated successfully",
-		},
+		"data":    "headquarter updated successfully",
 	})
 }
 
@@ -848,9 +895,7 @@ func (e *EmployerHandlers) DeleteHeadquarter(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": "headquarter deleted successfully",
-		},
+		"data":    "headquarter deleted successfully",
 	})
 }
 
@@ -914,7 +959,7 @@ func (e *EmployerHandlers) ListHeadquarter(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"success": false,
+		"success": true,
 		"data":    headquartersMap,
 	})
 }
@@ -1002,6 +1047,50 @@ func (e *EmployerHandlers) StoreOfficeImage(ctx *gin.Context) {
 			"message": fmt.Sprintf("%v images stored successfully", len(m_images)),
 			"status":  status,
 		},
+	})
+}
+
+func (e *EmployerHandlers) GetOfficeImages(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	officeImagesList := []map[string]interface{}{}
+	errGetOfficeImages := gormDB.Transaction(func(tx *gorm.DB) error {
+		var employerID string
+		errGetEmployerID := tx.Model(&models.Employer{}).Select([]string{"id"}).Where("user_id = ?", claims.Id).First(&employerID).Error
+		if errGetEmployerID != nil {
+			return errGetEmployerID
+		}
+
+		countOfficeImages := tx.Model(&models.OfficeImage{}).
+			Select([]string{
+				"office_images.image_id",
+				"images.name",
+			}).
+			Joins("INNER JOIN images ON images.id = office_images.image_id").
+			Where("employer_id = ?", employerID).Find(&officeImagesList).RowsAffected
+		if countOfficeImages == 0 {
+			return fmt.Errorf("%v rows office images were found", countOfficeImages)
+		}
+		return nil
+	})
+
+	if errGetOfficeImages != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errGetOfficeImages.Error(),
+			"message": "the employer data or office images doeesn't exist",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	TransformsIdToPath([]string{"image_id"}, officeImagesList)
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    officeImagesList,
 	})
 }
 
@@ -1148,9 +1237,7 @@ func (e *EmployerHandlers) DeleteOfficeImage(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": fmt.Sprintf("office image with image id %v deleted successfully", imageId),
-		},
+		"data":    fmt.Sprintf("office image with image id %v deleted successfully", imageId),
 	})
 }
 
@@ -1213,23 +1300,65 @@ func (e *EmployerHandlers) StoreEmployerSocials(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusCreated, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": fmt.Sprintf("%v employer socials created successfully", len(m_employerSocials)),
-		},
+		"data":    fmt.Sprintf("%v employer socials created successfully", len(m_employerSocials)),
 	})
 }
-func (e *EmployerHandlers) UpdateEmployerSocial(ctx *gin.Context) {
-	socialId, errParse := strconv.ParseUint(ctx.Param("id"), 10, 32)
-	if errParse != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
+func (e *EmployerHandlers) GetEmployerSocials(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	employerSocialsList := []map[string]interface{}{}
+	errGetEmployerSocials := gormDB.Transaction(func(tx *gorm.DB) error {
+		var employerID string
+		errGetEmployerID := tx.Model(&models.Employer{}).Select([]string{"id"}).Where("user_id = ?", claims.Id).First(&employerID).Error
+		if errGetEmployerID != nil {
+			return errGetEmployerID
+		}
+
+		countEmployerSocials := tx.Model(&models.EmployerSocial{}).
+			Select([]string{
+				"employer_socials.url",
+				"socials.id",
+				"socials.name",
+				"socials.icon_image_id",
+			}).Joins("INNER JOIN socials ON socials.id = employer_socials.social_id").
+			Where("employer_id = ?", employerID).Find(&employerSocialsList).RowsAffected
+		if countEmployerSocials == 0 {
+			return fmt.Errorf("%v rows employer social found", countEmployerSocials)
+		}
+		return nil
+	})
+
+	if errGetEmployerSocials != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   errParse.Error(),
-			"message": "social id as url parameter invalid, value must be a valid number",
+			"error":   errGetEmployerSocials.Error(),
+			"message": "employer profile or employer socials not found!",
 		})
 
 		ctx.Abort()
 		return
 	}
+
+	TransformsIdToPath([]string{"icon_image_id"}, employerSocialsList)
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    employerSocialsList,
+	})
+}
+func (e *EmployerHandlers) UpdateEmployerSocial(ctx *gin.Context) {
+	// socialId, errParse := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	// if errParse != nil {
+	// 	ctx.JSON(http.StatusBadRequest, gin.H{
+	// 		"success": false,
+	// 		"error":   errParse.Error(),
+	// 		"message": "social id as url parameter invalid, value must be a valid number",
+	// 	})
+
+	// 	ctx.Abort()
+	// 	return
+	// }
 
 	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
 	claims := ParseJWT(bearerToken)
@@ -1264,11 +1393,11 @@ func (e *EmployerHandlers) UpdateEmployerSocial(ctx *gin.Context) {
 		}
 
 		updateEmployerSocial := tx.Model(&models.EmployerSocial{}).
-			Where("employer_id = ? AND social_id = ?", employer["id"], socialId).
+			Where("employer_id = ? AND social_id = ?", employer["id"], employerSocial.SocialId).
 			Updates(employerSocialMap)
 
 		if updateEmployerSocial.RowsAffected == 0 {
-			return fmt.Errorf("employer social with social id %v might not available in database", socialId)
+			return fmt.Errorf("employer social with social id %v might not available in database", employerSocial.SocialId)
 		}
 
 		return nil
@@ -1278,7 +1407,7 @@ func (e *EmployerHandlers) UpdateEmployerSocial(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   errUpdateEmployerSocial.Error(),
-			"message": fmt.Sprintf("failed updating employer social with social id %v", socialId),
+			"message": fmt.Sprintf("failed updating employer social with social id %v", employerSocial.SocialId),
 		})
 
 		ctx.Abort()
@@ -1287,9 +1416,7 @@ func (e *EmployerHandlers) UpdateEmployerSocial(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": "employer social updated successfully",
-		},
+		"data":    "employer social updated successfully",
 	})
 }
 func (e *EmployerHandlers) DeleteEmployerSocial(ctx *gin.Context) {
@@ -1341,9 +1468,7 @@ func (e *EmployerHandlers) DeleteEmployerSocial(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": fmt.Sprintf("employer social with social id %v deleted successfully", socialId),
-		},
+		"data":    fmt.Sprintf("employer social with social id %v deleted successfully", socialId),
 	})
 }
 
@@ -1417,9 +1542,7 @@ func (e *EmployerHandlers) StoreVacancy(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusCreated, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": "vacancy created successfully",
-		},
+		"data":    "vacancy created successfully",
 	})
 }
 
@@ -1451,9 +1574,10 @@ func (e *EmployerHandlers) UpdateVacancy(ctx *gin.Context) {
 		value := v.Field(i)
 
 		if value.Kind() == reflect.Pointer && !value.IsNil() {
-			vacancyFormMap[fieldName] = value.Interface()
+			vacancyFormMap[fieldName] = value.Elem().Interface()
 		}
 	}
+	log.Println("updated field \t:", vacancyFormMap)
 
 	gormDB, _ := initializer.GetGorm()
 	errUpdateVacancy := gormDB.Transaction(func(tx *gorm.DB) error {
@@ -1471,6 +1595,7 @@ func (e *EmployerHandlers) UpdateVacancy(ctx *gin.Context) {
 		/*
 			check permissions for allowing employer wants to modify/updating the SLA count
 		*/
+		// delete(vacancyFormMap, "sla") // why do I need this?
 		updateVacancy := tx.Model(&models.Vacancy{}).
 			Where("id = ?", vacancyId).
 			Updates(vacancyFormMap)
@@ -1495,9 +1620,7 @@ func (e *EmployerHandlers) UpdateVacancy(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": fmt.Sprintf("vacancy with id %v updated successfully", vacancyId),
-		},
+		"data":    fmt.Sprintf("vacancy with id %v updated successfully", vacancyId),
 	})
 }
 
@@ -1535,9 +1658,7 @@ func (e *EmployerHandlers) DeleteVacancy(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": fmt.Sprintf("vacancy with id %v deleted successfully", vacancyId),
-		},
+		"data":    fmt.Sprintf("vacancy with id %v deleted successfully", vacancyId),
 	})
 }
 
@@ -1554,20 +1675,44 @@ func (e *EmployerHandlers) ListVacancy(ctx *gin.Context) {
 			return errGetEmployerId
 		}
 
-		getVacancies := tx.Model(&models.Vacancy{}).Select([]string{
-			"id",
-			"position",
-			"description",
-			"qualification",
-			"responsibility",
-			"line_industry",
-			"employee_type",
-			"min_experience",
-			"salary",
-			"work_arrangement",
-			"sla",
-			"is_inactive",
-		}).Where("employer_id = ?", employer["id"]).Find(&listVacancies)
+		errUpdatingSLA := tx.Exec(`
+			UPDATE vacancies
+			SET sla = CASE
+								WHEN is_inactive = 1 THEN 0
+								WHEN sla > 0 THEN sla - DATEDIFF(HOUR, updated_at, GETDATE())
+								ELSE 0
+							END,
+				is_inactive = CASE
+												WHEN sla = 0 THEN 1
+												ELse is_inactive
+											END,
+				updated_at = GETDATE()
+		`)
+		if errUpdatingSLA.Error != nil {
+			return errUpdatingSLA.Error
+		}
+
+		getVacancies := tx.Model(&models.Vacancy{}).
+			Select([]string{
+				"vacancies.id",
+				"vacancies.position",
+				"vacancies.description",
+				"vacancies.qualification",
+				"vacancies.responsibility",
+				"vacancies.line_industry",
+				"vacancies.employee_type",
+				"vacancies.min_experience",
+				"vacancies.salary",
+				"vacancies.work_arrangement",
+				"vacancies.sla",
+				"vacancies.is_inactive",
+				"vacancies.created_at",
+				"employers.name",
+				"employers.legal_name",
+				"employers.location",
+				"employers.profile_image_id",
+			}).Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
+			Where("employer_id = ?", employer["id"]).Find(&listVacancies)
 		if getVacancies.RowsAffected == 0 {
 			return fmt.Errorf("no vacancy data found for employer id: %v", employer["id"])
 		}
@@ -1586,13 +1731,264 @@ func (e *EmployerHandlers) ListVacancy(ctx *gin.Context) {
 		return
 	}
 
+	vacancies := []map[string]interface{}{}
+	employerListKey := []string{
+		"name",
+		"legal_name",
+		"location",
+		"profile_image_id",
+	}
+	for _, value := range listVacancies {
+		employer := map[string]interface{}{}
+		for _, key := range employerListKey {
+			employer[key] = value[key]
+		}
+		TransformsIdToPath([]string{"profile_image_id"}, employer)
+		vacancies = append(vacancies, map[string]interface{}{
+			"id":               value["id"],
+			"position":         value["position"],
+			"description":      value["description"],
+			"qualification":    value["qualification"],
+			"responsibility":   value["responsibility"],
+			"line_industry":    value["line_industry"],
+			"employee_type":    value["employee_type"],
+			"min_experience":   value["min_experience"],
+			"salary":           value["salary"],
+			"work_arrangement": value["work_arrangement"],
+			"sla":              value["sla"],
+			"is_inactive":      value["is_inactive"],
+			"created_at":       value["created_at"],
+			"employer":         employer,
+		})
+	}
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    listVacancies,
+		"data":    vacancies,
+	})
+}
+
+/* SCREENING */
+func (e *EmployerHandlers) GetApplicantScreening(ctx *gin.Context) {
+	vacancyID := ctx.Param("vacancyID")
+	if vacancyID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "missing 'vacancyID' parameter for vacancy_id",
+			"message": "please specify vacancy_id value for 'vacancyID' param",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	var applicantScreening []map[string]interface{}
+	getApplicantScreening := gormDB.Raw(`
+		SELECT
+			pipelines.id AS pipeline_id,
+			users.fullname,
+			users.email,
+			candidates.id AS candidate_id,
+			candidates.profile_image_id,
+			candidates.expertise,
+			(
+        SELECT TOP 1
+            educations.university,
+            educations.degree,
+						educations.major
+        FROM
+            educations
+        WHERE
+            educations.candidate_id = candidates.id
+        ORDER BY
+            CASE
+                WHEN educations.degree = 'Doctoral Degree / Ph.D. (S3)' THEN 1
+                WHEN educations.degree = 'Master\''s Degree (S2)' THEN 2
+                WHEN educations.degree = 'Bachelor\''s Degree (S1/D4)' THEN 3
+                WHEN educations.degree = 'Associate\''s Degree (D3)' THEN 4
+                ELSE 5
+            END ASC
+        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+    	) AS education,
+			(
+				SELECT
+					candidate_socials.url,
+					socials.name,
+					socials.icon_image_id
+				FROM
+					candidate_socials
+					INNER JOIN socials ON	socials.id = candidate_socials.social_id
+				WHERE
+					candidate_socials.candidate_id = candidates.id
+				FOR JSON PATH
+			) as socials
+		FROM
+			pipelines
+			INNER JOIN candidates ON candidates.id = pipelines.candidate_id
+			INNER JOIN users ON users.id = candidates.user_id
+		WHERE
+			pipelines.stage = ?
+			AND
+			pipelines.vacancy_id = ?
+	`,
+		"Screening", vacancyID).
+		Scan(&applicantScreening)
+
+	if getApplicantScreening.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   getApplicantScreening.Error.Error(),
+			"message": "failed get applicant on screening stage",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	for _, applicant := range applicantScreening {
+		TransformsIdToPath([]string{"profile_image_id"}, applicant)
+		if socialsJSON, ok := applicant["socials"].(string); ok {
+			var unmarshalledSocials []map[string]interface{}
+			if errUnmarshal := json.Unmarshal([]byte(socialsJSON), &unmarshalledSocials); errUnmarshal != nil {
+				log.Println(errUnmarshal.Error())
+
+				return
+			}
+
+			TransformsIdToPath([]string{"icon_image_id"}, unmarshalledSocials)
+			applicant["socials"] = unmarshalledSocials
+		}
+		if educationJSON, ok := applicant["education"].(string); ok {
+			var unmarshalledEducation map[string]interface{}
+			if errUnmarshal := json.Unmarshal([]byte(educationJSON), &unmarshalledEducation); errUnmarshal != nil {
+				log.Println(errUnmarshal.Error())
+
+				return
+			}
+
+			applicant["education"] = unmarshalledEducation
+		}
+	}
+
+	if len(applicantScreening) == 0 {
+		applicantScreening = []map[string]interface{}{}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    applicantScreening,
 	})
 }
 
 /* ASSESSMENT */
+func (e *EmployerHandlers) GetApplicantAssessment(ctx *gin.Context) {
+	vacancyID := ctx.Param("vacancyID")
+	if vacancyID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "missing 'vacancyID' parameter for vacancy_id",
+			"message": "please specify vacancy_id value for 'vacancyID' param",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	_, isUnassigned := ctx.GetQuery("unassigned")
+	unassignedQuery := `
+			AND
+				NOT EXISTS (
+					SELECT
+						1
+					FROM
+						assessment_assignees
+						INNER JOIN assessments ON assessments.id = assessment_assignees.assessment_id
+					WHERE
+						assessment_assignees.pipeline_id = pipelines.id
+						AND
+						assessments.vacancy_id = ?
+				)
+		`
+
+	query := `
+		SELECT
+			pipelines.id AS pipeline_id,
+			pipelines.candidate_id,
+			candidates.id AS candidate_id,
+			candidates.expertise,
+			candidates.profile_image_id,
+			users.id AS user_id,
+			users.fullname,
+			users.email
+		FROM
+			pipelines
+			INNER JOIN candidates ON candidates.id = pipelines.candidate_id
+			INNER JOIN users ON users.id = candidates.user_id
+		WHERE
+			pipelines.stage = ?
+			AND
+			pipelines.vacancy_id = ?
+	`
+	params := []interface{}{"Assessment", vacancyID}
+	if isUnassigned {
+		log.Println("send WITH 'unassigned'")
+		query += unassignedQuery
+		params = append(params, vacancyID)
+	} else {
+		log.Println("send WITHOUT 'unassigned'")
+	}
+
+	var applicantAssessment []map[string]interface{}
+	gormDB, _ := initializer.GetGorm()
+	getApplicantAssessment := gormDB.Raw(query, params...).Scan(&applicantAssessment)
+	if getApplicantAssessment.Error != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   getApplicantAssessment.Error.Error(),
+			"message": "error while querying for applicant with stage 'Assessment'",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	for _, applicant := range applicantAssessment {
+		user := map[string]interface{}{
+			"id":       applicant["user_id"],
+			"fullname": applicant["fullname"],
+			"email":    applicant["email"],
+		}
+		userKeys := []string{"user_id", "fullname", "email"}
+		for _, key := range userKeys {
+			delete(applicant, key)
+		}
+
+		candidate := map[string]interface{}{
+			"id":               applicant["candidate_id"],
+			"expertise":        applicant["expertise"],
+			"profile_image_id": applicant["profile_image_id"],
+			"user":             user,
+		}
+		TransformsIdToPath([]string{"profile_image_id"}, candidate)
+		candidateKeys := []string{"candidate_id", "expertise", "profile_image_id"}
+		for _, key := range candidateKeys {
+			delete(applicant, key)
+		}
+
+		applicant["candidate"] = candidate
+	}
+
+	if len(applicantAssessment) == 0 {
+		applicantAssessment = []map[string]interface{}{}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    applicantAssessment,
+	})
+}
+
 func (e *EmployerHandlers) StoreAssessment(ctx *gin.Context) {
 	assessmentForm := CreateAssessmentForm{}
 	if errBind := ctx.ShouldBind(&assessmentForm); errBind != nil {
@@ -1685,6 +2081,10 @@ func (e *EmployerHandlers) UpdateAssessment(ctx *gin.Context) {
 		return
 	}
 
+	form, _ := ctx.MultipartForm()
+	assessmentDocuments := form.File["assessment_documents"]
+	// extract to model documents
+	m_documents, documents_status := MultipleDocumentData(assessmentDocuments, "assessment_document")
 	/*
 		updating assessment document should be handled by /api/v1/documents/:id to updating spesific documents by ID
 	*/
@@ -1709,6 +2109,41 @@ func (e *EmployerHandlers) UpdateAssessment(ctx *gin.Context) {
 	}
 
 	gormDB, _ := initializer.GetGorm()
+	if len(m_documents) != 0 {
+		errCreateAssessmentDocuments := gormDB.Transaction(func(tx *gorm.DB) error {
+			errStoreDocuments := tx.Model(&models.Document{}).Create(&m_documents).Error
+			if errStoreDocuments != nil {
+				return errStoreDocuments
+			}
+
+			m_assessment_documents := []models.AssessmentDocument{}
+			for _, document := range m_documents {
+				m_assessment_documents = append(m_assessment_documents, models.AssessmentDocument{
+					AssessmentId: uint(assessmentId),
+					DocumentId:   document.ID,
+					CreatedAt:    time.Now(),
+				})
+			}
+			errStoreAssessmentDocuments := tx.Model(&models.AssessmentDocument{}).Create(&m_assessment_documents).Error
+			if errStoreAssessmentDocuments != nil {
+				return errStoreAssessmentDocuments
+			}
+
+			return nil
+		})
+
+		if errCreateAssessmentDocuments != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   errCreateAssessmentDocuments.Error(),
+				"message": "failed adding assessment document",
+			})
+
+			ctx.Abort()
+			return
+		}
+	}
+
 	if len(assessmentFormMap) != 0 {
 		updateAssessment := gormDB.Model(&models.Assessment{}).Where("id = ?", assessmentId).Updates(&assessmentFormMap)
 		if updateAssessment.RowsAffected == 0 {
@@ -1726,8 +2161,64 @@ func (e *EmployerHandlers) UpdateAssessment(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"message": fmt.Sprintf("successfully updated assessment with id %d", assessmentId),
+			"message":          fmt.Sprintf("successfully updated assessment with id %d", assessmentId),
+			"documents_status": documents_status,
 		},
+	})
+}
+
+func (e *EmployerHandlers) DeleteAssessmentDocument(ctx *gin.Context) {
+	assessmentID, errParseAssessment := strconv.ParseUint(ctx.Param("assessmentID"), 10, 32)
+	if errParseAssessment != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errParseAssessment.Error(),
+			"message": "assessmentID param should be a valid number",
+		})
+
+		ctx.Abort()
+		return
+	}
+	documentID, errParseDocument := strconv.ParseUint(ctx.Param("documentID"), 10, 32)
+	if errParseDocument != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errParseDocument.Error(),
+			"message": "documentID param should be a valid number",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	errDeleteAssessmentDocument := gormDB.Transaction(func(tx *gorm.DB) error {
+		deleteAssessmentDocument := tx.Where("assessment_id = ? AND document_id = ?", assessmentID, documentID).Delete(&models.AssessmentDocument{})
+		if deleteAssessmentDocument.RowsAffected == 0 {
+			return fmt.Errorf("no assessment document with assessmentID %v and documentID %v were found", assessmentID, documentID)
+		}
+
+		deleteDocument := tx.Where("id = ?", documentID).Delete(&models.Document{})
+		if deleteDocument.RowsAffected == 0 {
+			return fmt.Errorf("no document with ID %v were found", documentID)
+		}
+		return nil
+	})
+
+	if errDeleteAssessmentDocument != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errDeleteAssessmentDocument.Error(),
+			"message": "failed deleting assessment document",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    "assessment document deleted successfully",
 	})
 }
 
@@ -1744,7 +2235,7 @@ func (e *EmployerHandlers) DeleteAssessment(ctx *gin.Context) {
 		2. delete assessment_documents within documents
 		3. delete assessment itself
 	*/
-	assessmentId, errParse := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	assessmentId, errParse := strconv.ParseUint(ctx.Param("assessmentID"), 10, 32)
 	if errParse != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -1852,9 +2343,7 @@ func (e *EmployerHandlers) DeleteAssessment(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": "assessment successfully deleted",
-		},
+		"data":    "assessment successfully deleted",
 	})
 }
 func (e *EmployerHandlers) ListAssessment(ctx *gin.Context) {
@@ -1864,25 +2353,23 @@ func (e *EmployerHandlers) ListAssessment(ctx *gin.Context) {
 	gormDB, _ := initializer.GetGorm()
 
 	// result query as single JSON string
-	var assessmentsJSON string
+	// var assessmentsJSON string
+	var assessmentsQuery []map[string]interface{}
 	assessmentQueryBuilder := gormDB.Raw(`
 		SELECT
 			assessments.id,
 			assessments.name,
+			assessments.note,
+			assessments.assessment_link,
+			assessments.start_at,
+			assessments.due_date,
 			(
 				SELECT
 					assessment_documents.document_id,
-					(
-						SELECT
-							documents.name
-						FROM
-							documents
-						WHERE
-							documents.id = assessment_documents.document_id
-						FOR JSON PATH
-					) as name
+					documents.name
 				FROM
 					assessment_documents
+					INNER JOIN documents ON documents.id = assessment_documents.document_id
 				WHERE
 					assessment_documents.assessment_id = assessments.id
 				FOR JSON PATH
@@ -1892,50 +2379,21 @@ func (e *EmployerHandlers) ListAssessment(ctx *gin.Context) {
 					assessment_assignees.pipeline_id,
 					assessment_assignees.submission_status,
 					assessment_assignees.submission_result,
-					(
-						SELECT
-							pipelines.candidate_id,
-							(
-								SELECT
-									candidates.id,
-									candidates.expertise,
-									candidates.profile_image_id,
-									(
-										SELECT
-											users.fullname,
-											users.email
-										FROM
-											users
-										WHERE
-											users.id = candidates.user_id
-										FOR JSON PATH
-									) AS [user]
-								FROM
-									candidates
-								WHERE
-									candidates.id = pipelines.candidate_id
-								FOR JSON PATH
-							) as candidate
-						FROM
-							pipelines
-						WHERE
-							pipelines.id = assessment_assignees.pipeline_id
-						FOR JSON PATH
-					) as pipeline,
+					pipelines.stage,
+					candidates.id AS candidate_id,
+					candidates.expertise,
+					candidates.profile_image_id,
+					users.id AS user_id,
+					users.email,
+					users.fullname,
 					(
 						SELECT
 							assessment_assignee_submissions.submission_document_id,
-							(
-								SELECT
-									documents.name
-								FROM
-									documents
-								WHERE
-									documents.id = assessment_assignee_submissions.submission_document_id
-								FOR JSON PATH
-							) as documents
+							documents.id,
+							documents.name
 						FROM
 							assessment_assignee_submissions
+							INNER JOIN documents ON documents.id = assessment_assignee_submissions.submission_document_id
 						WHERE
 							assessment_assignee_submissions.assessment_id = assessment_assignees.assessment_id
 							AND
@@ -1944,6 +2402,9 @@ func (e *EmployerHandlers) ListAssessment(ctx *gin.Context) {
 					) as submissions
 				FROM
 					assessment_assignees
+					INNER JOIN pipelines ON pipelines.id = assessment_assignees.pipeline_id
+					INNER JOIN candidates ON candidates.id = pipelines.candidate_id
+					INNER JOIN users ON users.id = candidates.user_id 
 				WHERE
 					assessment_assignees.assessment_id = assessments.id
 				FOR JSON PATH
@@ -1952,8 +2413,8 @@ func (e *EmployerHandlers) ListAssessment(ctx *gin.Context) {
 			assessments
 		WHERE
 			vacancy_id = ?
-		FOR JSON PATH;
-	`, vacancyId).Scan(&assessmentsJSON)
+		
+	`, vacancyId).Scan(&assessmentsQuery)
 
 	if assessmentQueryBuilder.Error != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
@@ -1966,75 +2427,87 @@ func (e *EmployerHandlers) ListAssessment(ctx *gin.Context) {
 		return
 	}
 
-	tempAssessments := []map[string]interface{}{}
-	errDecode := json.Unmarshal([]byte(assessmentsJSON), &tempAssessments)
-	if errDecode != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": errDecode.Error(),
-		})
-	}
-
-	var listAssessment []map[string]interface{}
-
-	for _, assessment := range tempAssessments {
-		assesmentMap := map[string]interface{}{
-			"id":   assessment["id"],
-			"name": assessment["name"],
-		}
-
-		documents := []map[string]interface{}{}
-		for _, document := range assessment["assessment_documents"].([]interface{}) {
-			documents = append(documents, map[string]interface{}{
-				"id":   document.(map[string]interface{})["document_id"],
-				"name": document.(map[string]interface{})["name"].([]interface{})[0].(map[string]interface{})["name"],
-			})
+	for _, assessment := range assessmentsQuery {
+		assessmentDocuments := []map[string]interface{}{}
+		if assessmentDocumentsAsString, ok := assessment["assessment_documents"].(string); ok {
+			if errDecodeDocuments := json.Unmarshal([]byte(assessmentDocumentsAsString), &assessmentDocuments); errDecodeDocuments != nil {
+				log.Println("err decoding assessment documents: ", errDecodeDocuments.Error())
+				assessment["assessment_documents"] = []map[string]interface{}{}
+			} else {
+				for _, document := range assessmentDocuments {
+					document["id"] = document["document_id"]
+					document["assessment_document_id"] = document["document_id"]
+					delete(document, "document_id")
+				}
+				TransformsIdToPath([]string{"assessment_document_id"}, assessmentDocuments)
+				assessment["assessment_documents"] = assessmentDocuments
+			}
+		} else {
+			assessment["assessment_documents"] = assessmentDocuments
 		}
 
 		assessmentAssignees := []map[string]interface{}{}
-		if assignees, ok := assessment["assessment_assignees"].([]interface{}); ok {
-			for _, assignee := range assignees {
-				if assignee == nil {
-					continue
-				}
+		if assessmentAssigneesAsString, ok := assessment["assessment_assignees"].(string); ok {
+			if errDecodeAssignees := json.Unmarshal([]byte(assessmentAssigneesAsString), &assessmentAssignees); errDecodeAssignees != nil {
+				log.Println("err decoding assessment_assignees", errDecodeAssignees.Error())
+				assessment["assessment_assignees"] = []map[string]interface{}{}
+			} else {
+				for _, assignee := range assessmentAssignees {
+					pipeline := map[string]interface{}{
+						"id":    assignee["pipeline_id"],
+						"stage": assignee["stage"],
+					}
 
-				candidate := assignee.(map[string]interface{})["pipeline"].([]interface{})[0].(map[string]interface{})["candidate"].([]interface{})[0].(map[string]interface{})
-				user := assignee.(map[string]interface{})["pipeline"].([]interface{})[0].(map[string]interface{})["candidate"].([]interface{})[0].(map[string]interface{})["user"].([]interface{})[0].(map[string]interface{})
+					candidate := map[string]interface{}{
+						"id":               assignee["candidate_id"],
+						"expertise":        assignee["expertise"],
+						"profile_image_id": assignee["profile_image_id"],
+						"user": map[string]interface{}{
+							"id":       assignee["user_id"],
+							"email":    assignee["email"],
+							"fullname": assignee["fullname"],
+						},
+					}
+					TransformsIdToPath([]string{"profile_image_id"}, candidate)
 
-				assessmentSubmissions := []map[string]interface{}{}
-				if submissions, ok := assignee.(map[string]interface{})["submissions"].([]interface{}); ok {
-					for _, submission := range submissions {
-						assessmentSubmissions = append(assessmentSubmissions, map[string]interface{}{
-							"id":   submission.(map[string]interface{})["submission_document_id"],
-							"name": submission.(map[string]interface{})["documents"].([]interface{})[0].(map[string]interface{})["name"],
-						})
+					assigneeSubmissions := []map[string]interface{}{}
+					if assignee["submissions"] != nil {
+						for _, submission := range assignee["submissions"].([]interface{}) {
+							assigneeSubmissions = append(assigneeSubmissions, map[string]interface{}{
+								"id":                     submission.(map[string]interface{})["id"],
+								"name":                   submission.(map[string]interface{})["name"],
+								"submission_document_id": submission.(map[string]interface{})["submission_document_id"],
+							})
+						}
+						TransformsIdToPath([]string{"submission_document_id"}, assigneeSubmissions)
+
+						delete(assignee, "submissions")
+					}
+
+					submissionValue := assignee["submission_result"]
+
+					assignee["pipeline"] = pipeline
+					assignee["candidate"] = candidate
+					assignee["submission_documents"] = assigneeSubmissions
+					assignee["submission_result"] = submissionValue
+
+					// clearing unused property
+					deletedKeys := []string{"pipeline_id", "stage", "candidate_id", "expertise", "profile_image_id", "user_id", "email", "fullname"}
+					for _, key := range deletedKeys {
+						delete(assignee, key)
 					}
 				}
 
-				assessmentAssignee := map[string]interface{}{
-					"pipeline_id":       assignee.(map[string]interface{})["pipeline_id"],
-					"submission_status": assignee.(map[string]interface{})["submission_status"],
-					"submission_result": assignee.(map[string]interface{})["submission_result"],
-					"candidate": map[string]interface{}{
-						"fullname":         user["fullname"],
-						"email":            user["email"],
-						"expertise":        candidate["expertise"],
-						"profile_image_id": candidate["profile_image_id"],
-					},
-					"submission_documents": assessmentSubmissions,
-				}
-				assessmentAssignees = append(assessmentAssignees, assessmentAssignee)
+				assessment["assessment_assignees"] = assessmentAssignees
 			}
+		} else {
+			assessment["assessment_assignees"] = []map[string]interface{}{}
 		}
-
-		assesmentMap["assessment_documents"] = documents
-		assesmentMap["assessment_assignees"] = assessmentAssignees
-
-		listAssessment = append(listAssessment, assesmentMap)
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    listAssessment,
+		"data":    assessmentsQuery,
 	})
 }
 
@@ -2102,9 +2575,7 @@ func (e *EmployerHandlers) StoreAssignees(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusCreated, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": fmt.Sprintf("%v assignees stored successfully", len(m_assessment_assignees)),
-		},
+		"data":    fmt.Sprintf("%v assignees stored successfully", len(m_assessment_assignees)),
 	})
 }
 
@@ -2155,11 +2626,9 @@ func (e *EmployerHandlers) UpdateAssignee(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSONP(http.StatusOK, gin.H{
+	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": "assignee updated successfully",
-		},
+		"data":    "assignee updated successfully",
 	})
 }
 
@@ -2230,13 +2699,127 @@ func (e *EmployerHandlers) DeleteAssignee(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": "assignee deleted successfully",
-		},
+		"data":    "assignee deleted successfully",
 	})
 }
 
 /* INTERVIEW */
+func (e *EmployerHandlers) GetApplicantInterview(ctx *gin.Context) {
+	vacancyID := ctx.Param("vacancyID")
+	_, isUnscheduled := ctx.GetQuery("unscheduled")
+
+	query := `
+		SELECT
+			pipelines.id,
+			pipelines.stage,
+			candidates.id AS candidate_id,
+			candidates.profile_image_id,
+			users.id AS user_id,
+			users.fullname,
+			users.email,
+			(
+				SELECT TOP 1
+					interviews.id,
+					interviews.date,
+					interviews.location,
+					interviews.location_url,
+					interviews.status,
+					interviews.result
+				FROM
+					interviews
+				WHERE
+					interviews.pipeline_id = pipelines.id
+					AND
+					interviews.status <> ?
+					AND
+					interviews.vacancy_id = ?
+				ORDER BY interviews.date ASC
+				FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+			) AS interview
+		FROM
+			pipelines
+			INNER JOIN candidates ON candidates.id = pipelines.candidate_id
+			INNER JOIN users ON users.id = candidates.user_id 
+		WHERE
+			pipelines.vacancy_id = ?
+			AND
+			pipelines.stage = ?
+	`
+	if isUnscheduled {
+		// UNSCHEDULED HARUS MENGGUNAKAN WHERE VACANCY_ID
+		query += `
+			AND
+				NOT EXISTS (
+					SELECT
+						1
+					FROM
+						interviews
+					WHERE
+						interviews.pipeline_id = pipelines.id
+				)
+		`
+	} else {
+		query += `
+			AND
+				EXISTS (
+					SELECT
+						1
+					FROM
+						interviews
+					WHERE
+						interviews.pipeline_id = pipelines.id
+				)
+		`
+	}
+
+	applicantInterview := []map[string]interface{}{}
+	gormDB, _ := initializer.GetGorm()
+	getApplicantInterview := gormDB.Raw(query, "Conducted", vacancyID, vacancyID, "Interview").Scan(&applicantInterview)
+	if getApplicantInterview.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   getApplicantInterview.Error.Error(),
+			"message": "something wrong with sql server query",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	for _, applicant := range applicantInterview {
+		candidate := map[string]interface{}{
+			"id":               applicant["candidate_id"],
+			"profile_image_id": applicant["profile_image_id"],
+			"user": map[string]interface{}{
+				"id":       applicant["user_id"],
+				"fullname": applicant["fullname"],
+				"email":    applicant["email"],
+			},
+		}
+		TransformsIdToPath([]string{"profile_image_id"}, candidate)
+
+		interview := map[string]interface{}{}
+		if interviewStringJSON, ok := applicant["interview"].(string); ok {
+			if errDecodeInterviewJSON := json.Unmarshal([]byte(interviewStringJSON), &interview); errDecodeInterviewJSON != nil {
+				log.Println("cannot decode interview string JSON", errDecodeInterviewJSON)
+			}
+		}
+
+		deletedKeys := []string{"candidate_id", "profile_image_id", "user_id", "fullname", "email"}
+		for _, key := range deletedKeys {
+			delete(applicant, key)
+		}
+
+		applicant["candidate"] = candidate
+		applicant["interview"] = interview
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    applicantInterview,
+	})
+}
+
 func (e *EmployerHandlers) StoreInterview(ctx *gin.Context) {
 	interviewForm := CreateInterviewForm{}
 	if errBind := ctx.ShouldBind(&interviewForm); errBind != nil {
@@ -2315,9 +2898,7 @@ func (e *EmployerHandlers) StoreInterview(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusCreated, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": fmt.Sprintf("interview schedule created successfully for pipeline_id %v", interviewForm.PipelineId),
-		},
+		"data":    fmt.Sprintf("interview schedule created successfully for pipeline_id %v", interviewForm.PipelineId),
 	})
 }
 
@@ -2337,7 +2918,6 @@ func (e *EmployerHandlers) UpdateInterview(ctx *gin.Context) {
 	interviewForm := UpdateInterviewForm{}
 	ctx.ShouldBind(&interviewForm)
 
-	log.Println("interview form \t:", interviewForm)
 	interviewFormMap := map[string]interface{}{}
 	v := reflect.ValueOf(interviewForm)
 
@@ -2353,7 +2933,6 @@ func (e *EmployerHandlers) UpdateInterview(ctx *gin.Context) {
 			interviewFormMap[fieldName] = value.Interface()
 		}
 	}
-	log.Println("interview form map \t:", interviewFormMap)
 
 	gormDB, _ := initializer.GetGorm()
 	updateInterview := gormDB.Model(&models.Interview{}).Where("id = ?", interviewId).Updates(interviewFormMap)
@@ -2370,9 +2949,7 @@ func (e *EmployerHandlers) UpdateInterview(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": "interviews updated successfully",
-		},
+		"data":    "interviews updated successfully",
 	})
 }
 
@@ -2441,6 +3018,7 @@ func (e *EmployerHandlers) ListInterviewHistory(ctx *gin.Context) {
 			"result",
 		}).
 		Where("pipeline_id = ? AND vacancy_id = ?", pipelineId, vacacncyId).
+		Order("date ASC").
 		Find(&listInterview)
 
 	if findInterviews.RowsAffected == 0 {
@@ -2461,6 +3039,146 @@ func (e *EmployerHandlers) ListInterviewHistory(ctx *gin.Context) {
 }
 
 /* OFFERING */
+func (e *EmployerHandlers) GetApplicantsOffering(ctx *gin.Context) {
+	vacancyID := ctx.Param("vacancyID")
+	_, isUnoffered := ctx.GetQuery("unoffered")
+
+	var offeredQuery string
+	var unofferedQuery string
+	if isUnoffered {
+		unofferedQuery = `
+			AND
+			NOT EXISTS (
+				SELECT
+					1
+				FROM
+					offerings
+				WHERE
+					offerings.pipeline_id = pipelines.id
+			)
+		`
+		offeredQuery = ""
+	} else {
+		unofferedQuery = `
+			AND
+			EXISTS (
+				SELECT
+					1
+				FROM
+					offerings
+				WHERE
+					offerings.pipeline_id = pipelines.id
+			)
+		`
+		offeredQuery = `
+			,(
+				SELECT TOP 1
+					offerings.id,
+					CONVERT(varchar, offerings.end_on AT TIME ZONE 'UTC', 127) AS end_on,
+					offerings.status,
+					offerings.loa_document_id,
+					documents.id AS document_id,
+					documents.name
+				FROM
+					offerings
+						LEFT JOIN documents ON documents.id = offerings.loa_document_id
+				WHERE
+					offerings.pipeline_id = pipelines.id
+				FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+			) AS offering
+		`
+	}
+
+	sqlQuery := fmt.Sprintf(`
+			SELECT
+				pipelines.id,
+				pipelines.stage,
+				pipelines.status,
+				candidates.id AS candidate_id,
+				candidates.profile_image_id,
+				users.id AS user_id,
+				users.fullname,
+				users.email
+				%s
+			FROM
+				pipelines
+				INNER JOIN candidates ON candidates.id = pipelines.candidate_id
+				INNER JOIN users ON users.id = candidates.user_id
+			WHERE
+				pipelines.stage = ?
+				AND
+				pipelines.vacancy_id = ?
+				%s
+	`, offeredQuery, unofferedQuery)
+
+	applicantsOffering := []map[string]interface{}{}
+	gormDB, _ := initializer.GetGorm()
+	getApplicantsOffering := gormDB.Raw(sqlQuery, "Offering", vacancyID).Scan(&applicantsOffering)
+	if getApplicantsOffering.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   getApplicantsOffering.Error.Error(),
+			"message": "there was an error with sql server query",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	for _, applicant := range applicantsOffering {
+		candidate := map[string]interface{}{
+			"id":               applicant["candidate_id"],
+			"profile_image_id": applicant["profile_image_id"],
+			"user": map[string]interface{}{
+				"id":       applicant["user_id"],
+				"fullname": applicant["fullname"],
+				"email":    applicant["email"],
+			},
+		}
+		TransformsIdToPath([]string{"profile_image_id"}, candidate)
+
+		deletedKeys := []string{"candidate_id", "profile_image_id", "user_id", "fullname", "email"}
+		for _, key := range deletedKeys {
+			delete(applicant, key)
+		}
+
+		if isUnoffered {
+			applicant["candidate"] = candidate
+		} else {
+			if offeringStringJSON, ok := applicant["offering"].(string); ok {
+				offering := map[string]interface{}{}
+				if errDecodeOfferingString := json.Unmarshal([]byte(offeringStringJSON), &offering); errDecodeOfferingString != nil {
+					log.Println("err decode offering JSON string \t:", errDecodeOfferingString.Error())
+
+					applicant["offering"] = offering
+				} else {
+					loa_document := map[string]interface{}{
+						"id":              offering["document_id"],
+						"name":            offering["name"],
+						"loa_document_id": offering["loa_document_id"],
+					}
+					TransformsIdToPath([]string{"loa_document_id"}, loa_document)
+
+					deletedKeys := []string{"document_id", "name", "loa_document_id"}
+					for _, key := range deletedKeys {
+						delete(offering, key)
+					}
+
+					offering["loa_document"] = loa_document
+					applicant["offering"] = offering
+				}
+			}
+
+			applicant["candidate"] = candidate
+		}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    applicantsOffering,
+	})
+}
+
 func (e *EmployerHandlers) StoreOffering(ctx *gin.Context) {
 	offeringForm := struct {
 		VacancyId  string    `form:"vacancy_id" binding:"required"`
@@ -2483,7 +3201,7 @@ func (e *EmployerHandlers) StoreOffering(ctx *gin.Context) {
 	errStoreOffering := gormDB.Transaction(func(tx *gorm.DB) error {
 		m_offering := models.Offering{
 			EndOn:         offeringForm.EndOn,
-			Status:        "Offered",
+			Status:        "Pending Acceptance",
 			PipelineId:    offeringForm.PipelineId,
 			VacancyId:     offeringForm.VacancyId,
 			LoaDocumentId: nil,
@@ -2495,7 +3213,7 @@ func (e *EmployerHandlers) StoreOffering(ctx *gin.Context) {
 			return errCreateOffering
 		}
 
-		updatePipeline := tx.Model(&models.Pipeline{}).Where("id = ?", offeringForm.PipelineId).Update("stage", "Offering")
+		updatePipeline := tx.Model(&models.Pipeline{}).Where("id = ?", offeringForm.PipelineId).Update("status", "Offered")
 		if updatePipeline.RowsAffected == 0 {
 			return fmt.Errorf("%v rows affected, it might record doesn't exists in database", updatePipeline.RowsAffected)
 		}
@@ -2515,9 +3233,7 @@ func (e *EmployerHandlers) StoreOffering(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusCreated, gin.H{
 		"success": true,
-		"data": gin.H{
-			"message": "offering created successfully",
-		},
+		"data":    "offering created successfully",
 	})
 }
 
@@ -2536,11 +3252,15 @@ func (e *EmployerHandlers) UpdateOffering(ctx *gin.Context) {
 
 	offeringFormMap := map[string]interface{}{}
 	offeringForm := struct {
-		EndOn *time.Time `form:"end_on"`
+		EndOn  *time.Time `form:"end_on"`
+		Status *string    `form:"status"`
 	}{}
 	ctx.ShouldBind(&offeringForm)
 	if offeringForm.EndOn != nil {
 		offeringFormMap["end_on"] = offeringForm.EndOn
+	}
+	if offeringForm.Status != nil {
+		offeringFormMap["status"] = *offeringForm.Status
 	}
 
 	var document_status string
@@ -2551,10 +3271,17 @@ func (e *EmployerHandlers) UpdateOffering(ctx *gin.Context) {
 		timeNow := time.Now()
 
 		offering := map[string]interface{}{}
-		errGetLoaDocumentId := tx.Model(&models.Offering{}).Select("loa_document_id").Where("id = ?", offeringId).First(&offering).Error
+		errGetOffering := tx.Model(&models.Offering{}).Select("loa_document_id", "pipeline_id").Where("id = ?", offeringId).First(&offering).Error
 
-		if errGetLoaDocumentId != nil {
-			return errGetLoaDocumentId
+		if errGetOffering != nil {
+			return errGetOffering
+		}
+
+		if offeringFormMap["status"] == "Pending Acceptance" {
+			updatingPipeline := tx.Model(&models.Pipeline{}).Where("id = ?", offering["pipeline_id"]).Update("status", "Offered")
+			if updatingPipeline.RowsAffected == 0 {
+				return fmt.Errorf("%v rows affected, failed updating pipeline status", updatingPipeline.RowsAffected)
+			}
 		}
 
 		if errLoaDocument == nil {
@@ -2583,10 +3310,15 @@ func (e *EmployerHandlers) UpdateOffering(ctx *gin.Context) {
 					document_status = "failed updating loa_document_id while storing new document"
 				}
 
+				updatingPipeline := tx.Model(&models.Pipeline{}).Where("id = ?", offering["pipeline_id"]).Update("status", "LoA Issued")
+				if updatingPipeline.RowsAffected == 0 {
+					return fmt.Errorf("%v rows updated, failed updating pipeline status after adding new loa document", updatingPipeline.RowsAffected)
+				}
+
 				document_status = "document added successfully"
 			} else { // when loa_document_id exists, then just update document within that id
 				m_document.UpdatedAt = &timeNow
-				updateDocument := tx.Model(&models.Document{}).Where("id = ?", offering["loa_document_id"].(uint)).Updates(m_document)
+				updateDocument := tx.Model(&models.Document{}).Where("id = ?", offering["loa_document_id"].(*uint)).Updates(m_document)
 				if updateDocument.RowsAffected == 0 {
 					document_status = "no rows of document updated"
 				}
@@ -2736,5 +3468,60 @@ func (e *EmployerHandlers) ListOffering(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    listOffering,
+	})
+}
+
+/* PIPELINE */
+func (e *EmployerHandlers) GetPipelines(ctx *gin.Context) {
+}
+
+func (e *EmployerHandlers) UpdatePipeline(ctx *gin.Context) {
+	var pipelineJSON struct {
+		PipelineID string  `json:"pipeline_id" binding:"required"`
+		Stage      *string `json:"stage"`
+		Status     *string `json:"status"`
+	}
+
+	if errBind := ctx.ShouldBindJSON(&pipelineJSON); errBind != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "'pipeline_id' is required, check JSON fields",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	pipelineMap := map[string]interface{}{}
+	v := reflect.ValueOf(pipelineJSON)
+	for i := 0; i < v.NumField(); i++ {
+		fieldName := v.Type().Field(i).Tag.Get("json")
+		value := v.Field(i)
+
+		if value.Kind() == reflect.Pointer && !value.IsNil() {
+			if value.Elem().String() == "" {
+				continue
+			}
+			pipelineMap[fieldName] = value.Interface()
+		}
+	}
+
+	gormDB, _ := initializer.GetGorm()
+	updatePipeline := gormDB.Model(&models.Pipeline{}).Where("id = ?", pipelineJSON.PipelineID).Updates(pipelineMap)
+	if updatePipeline.RowsAffected == 0 {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "no record updated, check the record",
+			"message": "failed to update pipeline!",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    fmt.Sprintf("%v pipeline attributes updated successfully", len(pipelineMap)),
 	})
 }

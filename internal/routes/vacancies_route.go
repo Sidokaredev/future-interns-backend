@@ -13,8 +13,9 @@ func VacancyRoutes(apiv1 *gin.RouterGroup) {
 
 	router := apiv1.Group("/vacancies")
 	/* middlewares */
-	router.Use(middlewares.AuthorizationWithBearer())
+	router.Use(middlewares.PublicIdentityCheck())
 	{
 		router.Handle(constants.MethodGet, "/", vacancyHandlers.GetVacancies)
+		router.Handle(constants.MethodGet, "/:id", vacancyHandlers.GetVacancyDetail)
 	}
 }

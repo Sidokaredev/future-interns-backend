@@ -3,6 +3,7 @@ package initializer
 import (
 	"future-interns-backend/internal/models"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -161,5 +162,91 @@ func Migrate(target string) {
 		}
 
 		log.Println("migrate --target=permissions completed")
+	}
+}
+
+func SeedUser(seedFor string, email string, password string) {
+	gormDB, _ := GetGorm()
+	uuidNamespace := uuid.Must(uuid.NewRandom()) // generate UUID
+	uuidData := []byte("sdkdev-administrator")
+	uuidSHA1 := uuid.NewSHA1(uuidNamespace, uuidData)
+	hashedPassword, errHashed := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost) // Hashing Password
+	if errHashed != nil {
+		log.Fatalf(`
+			failed when hashing your provided password: %v 
+		`, errHashed.Error())
+		return
+	}
+	switch seedFor {
+	case "candidate":
+		log.Println("not ready yet!")
+	case "administrator":
+		m_user := models.User{
+			Id:       uuidSHA1.String(),
+			Fullname: "Administrator Sidokaredev",
+			Email:    email,
+			Password: string(hashedPassword),
+		}
+
+		errCreateAdministrator := gormDB.Transaction(func(tx *gorm.DB) error {
+			errStoreUser := tx.Create(&m_user).Error
+			if errStoreUser != nil {
+				return errStoreUser
+			}
+
+			m_identityAccess := models.IdentityAccess{
+				UserId: m_user.Id,
+				RoleId: 4,
+				Type:   "sdkdev-administrator",
+			}
+			errStoreIdentityAccess := tx.Create(&m_identityAccess).Error
+			if errStoreIdentityAccess != nil {
+				return errStoreIdentityAccess
+			}
+
+			return nil
+		})
+
+		if errCreateAdministrator != nil {
+			log.Fatalf(`
+				failed creating user with administrator access: %v
+			`, errCreateAdministrator.Error())
+		}
+
+		log.Println("administrator user created successfully!")
+	case "employer":
+		m_user := models.User{
+			Id:       uuidSHA1.String(),
+			Fullname: strings.Split(email, "@")[0],
+			Email:    email,
+			Password: string(hashedPassword),
+		}
+
+		errCreateAdministrator := gormDB.Transaction(func(tx *gorm.DB) error {
+			errStoreUser := tx.Create(&m_user).Error
+			if errStoreUser != nil {
+				return errStoreUser
+			}
+
+			m_identityAccess := models.IdentityAccess{
+				UserId: m_user.Id,
+				RoleId: 2,
+				Type:   "employer",
+			}
+			errStoreIdentityAccess := tx.Create(&m_identityAccess).Error
+			if errStoreIdentityAccess != nil {
+				return errStoreIdentityAccess
+			}
+
+			return nil
+		})
+
+		if errCreateAdministrator != nil {
+			log.Fatalf(`
+				failed creating user with employer access: %v
+			`, errCreateAdministrator.Error())
+		}
+
+		log.Println("employer user created successfully!")
 	}
 }

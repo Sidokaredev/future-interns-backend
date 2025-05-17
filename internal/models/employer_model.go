@@ -15,7 +15,7 @@ type Employer struct {
 	Founder                  string         `gorm:"type:nvarchar(128);not null"`
 	TotalOfEmployee          string         `gorm:"type:nvarchar(64);not null"`
 	Website                  string         `gorm:"type:nvarchar(256);not null"`
-	Description              string         `gorm:"type:nvarchar(512)"`
+	Description              string         `gorm:"type:nvarchar(max)"`
 	BackgroundProfileImageId *uint          `gorm:"type:bigint"`
 	ProfileImageId           *uint          `gorm:"type:bigint"`
 	UserId                   string         `gorm:"type:nvarchar(256);unique;not null"`

@@ -23,6 +23,8 @@ type Vacancy struct {
 	CreatedAt       time.Time      `gorm:"type:datetime;not null"`
 	UpdatedAt       *time.Time     `gorm:"type:datetime"`
 	DeletedAt       gorm.DeletedAt `gorm:"type:datetime"`
+	/* Belong To */
+	Employer Employer `gorm:"foreignKey:EmployerId"`
 	/* Has Many */
 	Pipelines   []Pipeline
 	Assessments []Assessment

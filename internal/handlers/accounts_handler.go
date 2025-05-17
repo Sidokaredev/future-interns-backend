@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/brianvoe/gofakeit/v7"
+	"github.com/brianvoe/gofakeit/v7/source"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -92,10 +94,10 @@ func GormErrType(err error) map[string]any {
 }
 
 const (
-	TokenExpiration  = 6 * time.Hour
-	CandidateRoleId  = 1
-	EmployerRoleId   = 2
-	UniversityRoleId = 3
+	TokenExpiration   = 6 * time.Hour
+	CANDIDATE_ROLE_ID = 1
+	EmployerRoleId    = 2
+	UniversityRoleId  = 3
 )
 
 func (h *AccountsHandler) Auth(context *gin.Context) {
@@ -201,7 +203,7 @@ func (h *AccountsHandler) RegisterAccount(context *gin.Context) {
 		}
 		identityAccess := &models.IdentityAccess{
 			UserId: user.Id,
-			RoleId: CandidateRoleId,
+			RoleId: CANDIDATE_ROLE_ID,
 			Type:   "candidate",
 		}
 		if err := tx.Create(&identityAccess).Error; err != nil {
@@ -228,6 +230,30 @@ func (h *AccountsHandler) RegisterAccount(context *gin.Context) {
 			"user_id":      user.Id,
 			"access_token": token,
 		},
+	})
+}
+
+func (h *AccountsHandler) UserRole(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	var identityType string
+	errGetIdentity := gormDB.Model(&models.IdentityAccess{}).Select([]string{"type"}).Where("user_id = ?", claims.Id).First(&identityType).Error
+	if errGetIdentity != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errGetIdentity.Error(),
+			"message": "user doesn't have identity!",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    identityType,
 	})
 }
 
@@ -265,4 +291,266 @@ func (h *AccountsHandler) UserInformation(context *gin.Context) {
 			"permissions": permissions,
 		},
 	})
+}
+
+func (h *AccountsHandler) UserAccountInfo(ctx *gin.Context) {
+	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	claims := ParseJWT(bearerToken)
+
+	gormDB, _ := initializer.GetGorm()
+	var userAccountData map[string]interface{}
+	errGetUser := gormDB.Model(&models.User{}).Select([]string{"fullname", "email"}).Where("id = ?", claims.Id).First(&userAccountData).Error
+
+	if errGetUser != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errGetUser.Error(),
+			"message": "user account record may not found",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    userAccountData,
+	})
+}
+
+/* multi-purpose */
+func (h *AccountsHandler) MakeAccount(ctx *gin.Context) {
+	var AccountProps struct {
+		Fullname     string `json:"fullname" binding:"required"`
+		Email        string `json:"email" binding:"required"`
+		Password     string `json:"password" binding:"required"`
+		IdentityType string `json:"identity_type" binding:"required"`
+	}
+
+	if errBindBody := ctx.ShouldBindJSON(&AccountProps); errBindBody != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBindBody.Error(),
+			"message": "check your JSON fields",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	gormDB, errGorm := initializer.GetGorm()
+	if errGorm != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errGorm.Error(),
+			"message": "failed getting GORM database instance",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	roles := []map[string]interface{}{}
+	getRoles := gormDB.Model(&models.Role{}).Select([]string{"id", "name"}).Find(&roles)
+	if getRoles.RowsAffected == 0 {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "no available roles",
+			"message": "roles table is empty, create role first before creating account",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ch_userID := make(chan string)
+	go GenUuid(AccountProps.Fullname, ch_userID)
+	ch_userPassword := make(chan string)
+	go HashPassword(AccountProps.Password, ch_userPassword)
+
+	rolesMap := map[string]uint{}
+	for _, role := range roles {
+		rolesMap[role["name"].(string)] = role["id"].(uint)
+	}
+
+	if rolesMap[AccountProps.IdentityType] == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "invalid identity_type",
+			"message": "identity_type value should be the one of ['basic/candidate', 'basic/employer', 'basic/university', 'sdkdev/administrator']",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	m_user := models.User{
+		Id:        <-ch_userID,
+		Fullname:  AccountProps.Fullname,
+		Email:     AccountProps.Email,
+		Password:  <-ch_userPassword,
+		CreatedAt: time.Now(),
+	}
+	errMakeAccount := gormDB.Transaction(func(tx *gorm.DB) error {
+		if errCreateUser := tx.Create(&m_user).Error; errCreateUser != nil {
+			return errCreateUser
+		}
+		m_identity := models.IdentityAccess{
+			UserId: m_user.Id,
+			RoleId: rolesMap[AccountProps.IdentityType],
+			Type:   strings.Split(AccountProps.IdentityType, "/")[1],
+		}
+		if errCreateIdentity := tx.Create(&m_identity).Error; errCreateIdentity != nil {
+			return errCreateIdentity
+		}
+		return nil
+	})
+
+	if errMakeAccount != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errMakeAccount.Error(),
+			"message": "failed creating account with provided data",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"data":    "account created successfully",
+	})
+}
+
+func (h *AccountsHandler) MakeRandomAccounts(ctx *gin.Context) {
+	var RandomAccountOptions struct {
+		Count        int    `json:"count" binding:"required"`
+		IdentityType string `json:"identity_type" binding:"required"`
+	}
+
+	if errBind := ctx.ShouldBindJSON(&RandomAccountOptions); errBind != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBind.Error(),
+			"message": "please double check your JSON fields",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	IDGenerator := func(fullname string) string {
+		namespace := uuid.Must(uuid.NewRandom())
+		data := []byte(fullname)
+		sha1ID := uuid.NewSHA1(namespace, data)
+		return sha1ID.String()
+	}
+
+	PasswordGenerator := func(formattedName string) string {
+		hashed, errHash := bcrypt.GenerateFromPassword([]byte(formattedName), bcrypt.DefaultCost)
+		if errHash != nil {
+			log.Println("fail hashing password")
+			panic(errHash)
+		}
+
+		return string(hashed)
+	}
+
+	gormDB, errGorm := initializer.GetGorm()
+	if errGorm != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errGorm.Error(),
+			"message": "fail getting GORM connection instance",
+		})
+
+		ctx.Abort()
+		return
+	}
+
+	switch RandomAccountOptions.IdentityType {
+	case "basic/employer":
+		ctx.JSON(http.StatusCreated, gin.H{
+			"success": true,
+			"data":    "will be available soon",
+		})
+
+		ctx.Abort()
+		return
+
+	case "basic/candidate":
+		candidateFaker := gofakeit.NewFaker(source.NewCrypto(), true)
+
+		m_users := make([]models.User, RandomAccountOptions.Count)
+		m_identities := make([]models.IdentityAccess, RandomAccountOptions.Count)
+		m_candidates := make([]models.Candidate, RandomAccountOptions.Count)
+		for i := 0; i < RandomAccountOptions.Count; i++ {
+			fullname := fmt.Sprintf("%s %s", candidateFaker.FirstName(), candidateFaker.LastName())
+			m_users[i] = models.User{
+				Id:        IDGenerator(fullname),
+				Fullname:  fullname,
+				Email:     candidateFaker.Email(),
+				Password:  PasswordGenerator(strings.ToLower(strings.ReplaceAll(fullname, " ", "."))),
+				CreatedAt: time.Now(),
+			}
+
+			m_candidates[i] = models.Candidate{
+				Id:          IDGenerator(fullname),
+				Expertise:   candidateFaker.JobTitle(),
+				AboutMe:     candidateFaker.Sentence(32),
+				DateOfBirth: gofakeit.PastDate(),
+				CreatedAt:   time.Now(),
+				User:        &m_users[i],
+			}
+
+			m_identities[i] = models.IdentityAccess{
+				UserId: m_users[i].Id,
+				RoleId: 1,
+				Type:   "candidate",
+			}
+		}
+
+		errCreateCandidates := gormDB.Transaction(func(tx *gorm.DB) error {
+			errStoreCandidates := tx.CreateInBatches(&m_candidates, 50).Error
+			if errStoreCandidates != nil {
+				return errStoreCandidates
+			}
+
+			errStoreIdentities := tx.CreateInBatches(&m_identities, 50).Error
+			if errStoreCandidates != nil {
+				return errStoreIdentities
+			}
+
+			return nil
+		})
+		if errCreateCandidates != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   errCreateCandidates.Error(),
+				"message": "fail creating random candidates",
+			})
+
+			ctx.Abort()
+			return
+		}
+
+		ctx.JSON(http.StatusCreated, gin.H{
+			"success": true,
+			"data":    fmt.Sprintf("%d candidates created", len(m_candidates)),
+		})
+
+		ctx.Abort()
+		return
+
+	default:
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "invalid identity_type",
+			"message": "'identity_type' should be one of these option [basic/candidate, basic/employer, basic/university, sdkdev/administrator]",
+		})
+
+		ctx.Abort()
+		return
+	}
 }

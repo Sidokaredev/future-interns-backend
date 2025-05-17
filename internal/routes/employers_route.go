@@ -19,6 +19,7 @@ func EmployerRoutes(apiv1 *gin.RouterGroup) {
 		router.Handle(constants.MethodPatch, "/", employerHandlers.UpdateEmployer)
 		router.Handle(constants.MethodGet, "/", employerHandlers.GetEmployer)
 		router.Handle(constants.MethodDelete, "/", employerHandlers.DeleteEmployer)
+		router.Handle(constants.MethodGet, "/check", employerHandlers.CheckProfile)
 	}
 	routerHeadquarter := router.Group("/headquarters")
 	{
@@ -31,13 +32,15 @@ func EmployerRoutes(apiv1 *gin.RouterGroup) {
 	routerOfficeImages := router.Group("/office-images")
 	{
 		routerOfficeImages.Handle(constants.MethodPost, "/", employerHandlers.StoreOfficeImage)
+		routerOfficeImages.Handle(constants.MethodGet, "/", employerHandlers.GetOfficeImages)
 		routerOfficeImages.Handle(constants.MethodPatch, "/:id", employerHandlers.UpdateOfficeImage)
 		routerOfficeImages.Handle(constants.MethodDelete, "/:id", employerHandlers.DeleteOfficeImage)
 	}
 	routerSocial := router.Group("/socials")
 	{
 		routerSocial.Handle(constants.MethodPost, "/", employerHandlers.StoreEmployerSocials)
-		routerSocial.Handle(constants.MethodPatch, "/:id", employerHandlers.UpdateEmployerSocial)
+		routerSocial.Handle(constants.MethodGet, "/", employerHandlers.GetEmployerSocials)
+		routerSocial.Handle(constants.MethodPatch, "/", employerHandlers.UpdateEmployerSocial)
 		routerSocial.Handle(constants.MethodDelete, "/:id", employerHandlers.DeleteEmployerSocial)
 	}
 	routerVacancies := router.Group("/vacancies")
@@ -48,13 +51,18 @@ func EmployerRoutes(apiv1 *gin.RouterGroup) {
 		routerVacancies.Handle(constants.MethodDelete, "/:id", employerHandlers.DeleteVacancy)
 		routerVacancies.Handle(constants.MethodGet, "/", employerHandlers.ListVacancy)
 	}
+	// routerScreening := router.Group("/screenings")
+	{
+		// routerScreening.Handle(constants.MethodGet, "/", employerHandlers.UpdateS)
+	}
 	routerAssessment := router.Group("/assessments")
 	{
 		routerAssessment.Handle(constants.MethodPost, "/", employerHandlers.StoreAssessment)
 		routerAssessment.Handle(constants.MethodPatch, "/:id", employerHandlers.UpdateAssessment)
 		routerAssessment.Handle(constants.MethodGet, "/:id", employerHandlers.ListAssessment)
 		// routerAssessment.Handle(contants.MethodGet, "/:id", employerHandlers.GetAssessment)
-		routerAssessment.Handle(constants.MethodDelete, "/:id", employerHandlers.DeleteAssessment)
+		routerAssessment.Handle(constants.MethodDelete, "/:assessmentID", employerHandlers.DeleteAssessment)
+		routerAssessment.Handle(constants.MethodDelete, "/:assessmentID/assessment-document/:documentID", employerHandlers.DeleteAssessmentDocument)
 
 		routerAssessmentAssignee := routerAssessment.Group("/assignees")
 		{
@@ -77,5 +85,13 @@ func EmployerRoutes(apiv1 *gin.RouterGroup) {
 		// routerOffering.Handle(constants.MethodGet, "/:id", employerHandlers.GetOffering)
 		routerOffering.Handle(constants.MethodDelete, "/:id", employerHandlers.DeleteOffering)
 		routerOffering.Handle(constants.MethodGet, "/:id", employerHandlers.ListOffering)
+	}
+	routerPipeline := router.Group("/pipelines")
+	{
+		routerPipeline.Handle(constants.MethodPatch, "/", employerHandlers.UpdatePipeline)
+		routerPipeline.Handle(constants.MethodGet, "/:vacancyID/screening", employerHandlers.GetApplicantScreening)
+		routerPipeline.Handle(constants.MethodGet, "/:vacancyID/assessment", employerHandlers.GetApplicantAssessment)
+		routerPipeline.Handle(constants.MethodGet, "/:vacancyID/interview", employerHandlers.GetApplicantInterview)
+		routerPipeline.Handle(constants.MethodGet, "/:vacancyID/offering", employerHandlers.GetApplicantsOffering)
 	}
 }

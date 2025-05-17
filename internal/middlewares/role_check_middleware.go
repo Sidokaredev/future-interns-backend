@@ -18,17 +18,17 @@ func RoleCheck() gin.HandlerFunc {
 		claims := handlers.ParseJWT(bearerToken)
 
 		gormDB, _ := initializer.GetGorm()
-		identityAccess := []map[string]interface{}{}
+		identityAccess := map[string]interface{}{}
 		permissions := []map[string]interface{}{}
 
 		GetUserRole := gormDB.Model(&models.IdentityAccess{}).
 			Select([]string{
-				"roles.id",
+				"roles.id as role_id",
 				"roles.name",
 				// "roles.description",
-				// "identity_accesses.type",
+				"identity_accesses.type",
 			}).Joins("INNER JOIN roles ON roles.id = identity_accesses.role_id").
-			Where("user_id = ?", claims.Id).Find(&identityAccess)
+			Where("user_id = ?", claims.Id).First(&identityAccess) // DEFAULT IS Find() return multiple identity_accesses
 
 		if GetUserRole.RowsAffected == 0 {
 			ctx.JSON(http.StatusBadRequest, gin.H{
@@ -41,15 +41,19 @@ func RoleCheck() gin.HandlerFunc {
 			return
 		}
 
-		listOfIdentity := []string{}
-		for _, identity := range identityAccess {
-			listOfIdentity = append(listOfIdentity, identity["name"].(string))
-		}
+		// listOfIdentity := []string{}
+		// for _, identity := range identityAccess {
+		// 	listOfIdentity = append(listOfIdentity, identity["name"].(string))
+		// }
+		// useIdentity := map[string]interface{}{}
 
-		rolesId := []uint{}
-		for _, identity := range identityAccess {
-			rolesId = append(rolesId, identity["id"].(uint))
-		}
+		// rolesId := []uint{}
+		// for _, identity := range identityAccess {
+		// 	rolesId = append(rolesId, identity["id"].(uint))
+		// }
+
+		roleID := identityAccess["role_id"]
+		delete(identityAccess, "role_id")
 
 		GetPermissions := gormDB.Model(&models.RolePermission{}).
 			Select([]string{
@@ -58,7 +62,7 @@ func RoleCheck() gin.HandlerFunc {
 				// "permissions.description",
 			}).
 			Joins("INNER JOIN permissions ON permissions.id = role_permissions.permission_id").
-			Where("role_id IN ?", rolesId).
+			Where("role_id = ?", roleID).
 			Find(&permissions)
 
 		if GetPermissions.RowsAffected == 0 {
@@ -70,7 +74,7 @@ func RoleCheck() gin.HandlerFunc {
 			listOfPermissions[permission["name"].(string)] = true
 		}
 
-		ctx.Set("identity-accesses", listOfIdentity)
+		ctx.Set("identity-accesses", identityAccess)
 		ctx.Set("permissions", listOfPermissions)
 		ctx.Next()
 	}

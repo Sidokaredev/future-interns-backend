@@ -18,7 +18,6 @@ type DatabaseProps struct {
 	Password          string
 	Host              string
 	Port              int
-	Instance          string
 	Database          string
 	ConnectionTimeout int
 	Encrypt           bool
