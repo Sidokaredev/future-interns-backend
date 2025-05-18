@@ -38,7 +38,7 @@ func RequestLogs() gin.HandlerFunc {
 
 		debug.SetGCPercent(-1) // stopping automatic garbage collection
 
-		cpuTimeBefore, errCpuTimeBefore := helpers.GetCPUAcctUsage()
+		cpuTimeBefore, errCpuTimeBefore := helpers.GetCPUStatUsage()
 		if errCpuTimeBefore != nil {
 			log.Println("ERROR CAPTURING CPU USAGE BEFORE!!!")
 			log.Println(errCpuTimeBefore.Error())
@@ -50,25 +50,22 @@ func RequestLogs() gin.HandlerFunc {
 
 		responseTime := time.Since(startTimeRequest)
 
-		memStats, errMemStats := helpers.GetMemoryUsage()
+		memStats, errMemStats := helpers.CalcMemUsage()
 		if errMemStats != nil {
 			log.Println("ERROR MEM USAGE!!!")
 			log.Println(errMemStats.Error())
 		}
-		log.Printf("mem limit: %v | mem max usage: %v | mem usage: %v | percent: %v", memStats.Limit, memStats.MaxUsage, memStats.Usage, memStats.Percent)
 
-		cpuTimeAfter, errCpuTimeAfter := helpers.GetCPUAcctUsage()
+		cpuTimeAfter, errCpuTimeAfter := helpers.GetCPUStatUsage()
 		if errCpuTimeAfter != nil {
 			log.Println("ERROR CAPTURING CPU USAGE AFTER!!!")
 			log.Println(errCpuTimeAfter.Error())
 		}
-		log.Printf("cpu time before: %vms | cpu time after: %vms | elapsedCpuTime: %vms", cpuTimeBefore, cpuTimeAfter, (cpuTimeAfter - cpuTimeBefore))
 
-		cpuStats, errCpuStats := helpers.CPUTimeUsage(responseTime, (cpuTimeAfter - cpuTimeBefore))
+		cpuStats, errCpuStats := helpers.CalcCPUTimeUsage(responseTime, (cpuTimeAfter - cpuTimeBefore))
 		if errCpuStats != nil {
 			log.Println(errCpuStats.Error())
 		}
-		log.Printf("cpu usage percent: %v", cpuStats.TotalCPUTime)
 
 		debug.SetGCPercent(100) // starting automatic garbage collection
 

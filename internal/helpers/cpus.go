@@ -1,6 +1,8 @@
 package helpers
 
 import (
+	"bufio"
+	"errors"
 	"log"
 	"os"
 	"strconv"
@@ -82,4 +84,92 @@ func GetCPUAcctUsage() (float64, error) {
 	}
 
 	return float64(cpuAcctUsageValue) / nanoToMilli, nil
+}
+
+func GetCPUStatUsage() (float64, error) {
+	const microToMilli = 1_000
+	cpuStatFile, errCpuStatFile := os.Open("/sys/fs/cgroup/cpu.stat")
+	if errCpuStatFile != nil {
+		return 0, errCpuStatFile
+	}
+
+	defer cpuStatFile.Close()
+
+	scanner := bufio.NewScanner(cpuStatFile)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		log.Printf("line : %s", line)
+
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			log.Println("string has less than 2 parts!")
+			continue
+		}
+
+		if parts[0] == "usage_usec" {
+			cpuUsageInMicroseconds, errParseFloat := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+			if errParseFloat != nil {
+				return 0, errParseFloat
+			}
+
+			return (cpuUsageInMicroseconds / microToMilli), nil
+		}
+	}
+
+	if errScan := scanner.Err(); errScan != nil {
+		return 0, nil
+	}
+
+	return 0, errors.New("cannot find 'usage_usec' value")
+}
+
+func CalcCPUTimeUsage(elapsedTime time.Duration, elapsedCpuTime float64) (CPUs, error) {
+	const microToMilli = 1_000
+
+	cpuMax, errCpuMax := os.ReadFile("/sys/fs/cgroup/cpu.max")
+	if errCpuMax != nil {
+		return CPUs{}, errCpuMax
+	}
+
+	parts := strings.Fields(string(cpuMax))
+	if len(parts) != 2 {
+		return CPUs{}, errors.New("invalid value format for cpu.stat file")
+	}
+
+	if strings.TrimSpace(parts[0]) == "max" {
+		return CPUs{}, errors.New("machine has no cpu quota")
+	}
+
+	cpuQuotaValue, errQuotaValue := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if errQuotaValue != nil {
+		log.Printf("err parse cpu quota: %s", parts[0])
+		return CPUs{}, errQuotaValue
+	}
+
+	cpuPeriodValue, errPeriodValue := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if errPeriodValue != nil {
+		log.Printf("err parse cpu period: %s", parts[1])
+		return CPUs{}, errPeriodValue
+	}
+
+	cpuQuotaInMs := cpuQuotaValue / microToMilli
+	cpuPeriodInMs := cpuPeriodValue / microToMilli
+
+	maxCpuTime := (float64(elapsedTime.Milliseconds()) / float64(cpuPeriodInMs)) * float64(cpuQuotaInMs)
+
+	totalCpuTimeInPercent := (elapsedCpuTime / maxCpuTime) * 100
+	log.Printf("time: %vms | cpu time usage: %.2f | cpu quota ms: %.2f | cpu period ms: %.2f | max cpu ms: %.2f | percent: %v", elapsedTime.Milliseconds(), elapsedCpuTime, cpuQuotaInMs, cpuPeriodInMs, maxCpuTime, ((totalCpuTimeInPercent * 100) / 100))
+
+	return CPUs{
+		Period:       int(cpuPeriodInMs),
+		Quota:        int(cpuQuotaInMs),
+		AcctUsage:    elapsedCpuTime,
+		MaxCPUTime:   maxCpuTime,
+		TotalCPUTime: totalCpuTimeInPercent,
+		Elapsed:      elapsedTime.Milliseconds(),
+	}, nil
 }
