@@ -18,6 +18,7 @@ func init() {
 	if err != nil {
 		log.Fatalf("Database initialization failed: %v", err)
 	}
+	initializer.DockerClientInit()
 }
 
 func Execute() {

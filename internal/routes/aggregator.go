@@ -16,4 +16,5 @@ func LoadRoutes(engine *gin.Engine) {
 	RoleRoutes(apiv1)
 	PermissionRoutes(apiv1)
 	PublicRoutes(apiv1)
+	ContainersRoute(apiv1)
 }
