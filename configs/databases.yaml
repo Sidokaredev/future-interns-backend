@@ -1,0 +1,21 @@
+mssql:
+  dev:
+    username: sa
+    password: euPK#sp8[dL!(4M/m+*AYk]~fvZ;rN>g
+    host: app-mssql_server-1
+    port: 1433
+    database: future_interns
+    connectionTimeout: 5
+    encrypt: false
+
+redis:
+  dev:
+    address: app-redis_server-1:6379
+    username: future_interns_app
+    password: r2;?[*7%VQZ5CRJ)nK8W9!
+    database: 2
+    protocol: 3
+    
+authorization:
+  jwt:
+    secretKey: sidokaredev24
