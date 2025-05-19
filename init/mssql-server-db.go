@@ -4,10 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
+	"os"
+	"time"
 
 	"github.com/spf13/viper"
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 var (
@@ -20,7 +24,6 @@ func MssqlServerInit() error {
 		Password          string
 		Host              string
 		Port              int
-		Instance          string
 		Database          string
 		ConnectionTimeout int
 		Encrypt           bool
@@ -29,10 +32,19 @@ func MssqlServerInit() error {
 		return err
 	}
 
-	dsn := fmt.Sprintf("sqlserver://%s:%s@%s:%d?database=%s", dbconfig.Username, dbconfig.Password, dbconfig.Host, dbconfig.Port, dbconfig.Database)
+	dsn := fmt.Sprintf("sqlserver://%s:%s@%s:%d?database=%s", dbconfig.Username, url.QueryEscape(dbconfig.Password), dbconfig.Host, dbconfig.Port, dbconfig.Database)
+
+	dbLogger := logger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags),
+		logger.Config{
+			SlowThreshold: time.Hour,
+			LogLevel:      logger.Warn,
+			Colorful:      true,
+		},
+	)
 
 	var errDB error
-	mssqlDB, errDB = gorm.Open(sqlserver.Open(dsn), &gorm.Config{TranslateError: true})
+	mssqlDB, errDB = gorm.Open(sqlserver.Open(dsn), &gorm.Config{TranslateError: true, Logger: dbLogger})
 	if errDB != nil {
 		return errDB
 	}

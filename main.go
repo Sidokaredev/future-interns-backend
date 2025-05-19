@@ -17,13 +17,6 @@ func main() {
 		panic(errMssql)
 	}
 
-	// gormDB, errGorm := initializer.GetMssqlDB()
-	// if errGorm != nil {
-	// 	log.Fatal(errGorm)
-	// }
-
-	// gormDB.AutoMigrate(&models.CacheSession{}, &models.RequestLog{})
-
 	if errRedis := initializer.RedisServerInit(); errRedis != nil {
 		panic(errRedis)
 	}
@@ -34,5 +27,5 @@ func main() {
 	engine.Use(gin.Logger(), gin.Recovery(), middlewares.CORSPolicy())
 
 	routes.ListenToRoutes(engine)
-	engine.Run(":8000")
+	engine.Run(":8001")
 }

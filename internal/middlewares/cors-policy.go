@@ -8,9 +8,19 @@ import (
 
 func CORSPolicy() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		ctx.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		origin := ctx.GetHeader("Origin")
+		whitelisted := []string{
+			"http://localhost:5173",
+			"https://sidokaredev.github.io",
+			"https://sidokaredev.space",
+		}
+		for _, host := range whitelisted {
+			if origin == host {
+				ctx.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			}
+		}
 		ctx.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		ctx.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		ctx.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Measure-Cache-Request-Logs, X-Cache-Session")
 		ctx.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 
 		if ctx.Request.Method == "OPTIONS" {

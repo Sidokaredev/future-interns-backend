@@ -16,5 +16,6 @@ func LoadAppConfig() error {
 		return err
 	}
 	log.Println("databases.yaml loaded ...")
+
 	return nil
 }
