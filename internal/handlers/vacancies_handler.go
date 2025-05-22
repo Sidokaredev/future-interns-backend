@@ -62,6 +62,10 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 	keyword := fmt.Sprintf("%%%s%%", strings.TrimSpace(keywordQuery))
 	locationQuery, _ := ctx.GetQuery("location")
 	location := fmt.Sprintf("%%%s%%", strings.TrimSpace(locationQuery))
+	lineIndustryQuery, _ := ctx.GetQuery("lineIndustry")
+	lineIndustry := fmt.Sprintf("%%%s%%", strings.TrimSpace(lineIndustryQuery))
+	employeeTypeQuery, _ := ctx.GetQuery("employeeType")
+	employeeType := fmt.Sprintf("%%%s%%", strings.TrimSpace(employeeTypeQuery))
 
 	var vacancies []map[string]interface{}
 	var applied []string
@@ -89,7 +93,7 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 		}).
 			Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
 			Order("vacancies.created_at DESC").
-			Where("vacancies.is_inactive = ? AND employers.location LIKE ? AND (vacancies.position LIKE ? OR vacancies.description LIKE ? OR vacancies.qualification LIKE ? OR vacancies.responsibility LIKE ?)", false, location, keyword, keyword, keyword, keyword).
+			Where("vacancies.is_inactive = ? AND employers.location LIKE ? AND (vacancies.position LIKE ? OR vacancies.description LIKE ? OR vacancies.qualification LIKE ? OR vacancies.responsibility LIKE ?) AND vacancies.line_industry LIKE ? AND vacancies.employee_type LIKE ?", false, location, keyword, keyword, keyword, keyword, lineIndustry, employeeType).
 			Limit(limit).Offset(offset).Find(&vacancies)
 
 		if errGetVacanciesList.Error != nil {

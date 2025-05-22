@@ -18,7 +18,7 @@ func init() {
 	if err != nil {
 		log.Fatalf("Database initialization failed: %v", err)
 	}
-	initializer.DockerClientInit()
+	// initializer.DockerClientInit() // control docker over socker --mount /var/run/docker.sock
 }
 
 func Execute() {

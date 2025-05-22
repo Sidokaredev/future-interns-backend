@@ -2730,8 +2730,6 @@ func (e *EmployerHandlers) GetApplicantInterview(ctx *gin.Context) {
 				WHERE
 					interviews.pipeline_id = pipelines.id
 					AND
-					interviews.status <> ?
-					AND
 					interviews.vacancy_id = ?
 				ORDER BY interviews.date ASC
 				FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
@@ -2745,6 +2743,7 @@ func (e *EmployerHandlers) GetApplicantInterview(ctx *gin.Context) {
 			AND
 			pipelines.stage = ?
 	`
+	// [AND	interviews.status <> ?] "Conducted"
 	if isUnscheduled {
 		// UNSCHEDULED HARUS MENGGUNAKAN WHERE VACANCY_ID
 		query += `
@@ -2774,7 +2773,7 @@ func (e *EmployerHandlers) GetApplicantInterview(ctx *gin.Context) {
 
 	applicantInterview := []map[string]interface{}{}
 	gormDB, _ := initializer.GetGorm()
-	getApplicantInterview := gormDB.Raw(query, "Conducted", vacancyID, vacancyID, "Interview").Scan(&applicantInterview)
+	getApplicantInterview := gormDB.Raw(query, vacancyID, vacancyID, "Interview").Scan(&applicantInterview)
 	if getApplicantInterview.Error != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,

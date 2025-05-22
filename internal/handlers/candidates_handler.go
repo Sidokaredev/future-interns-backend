@@ -56,8 +56,8 @@ type UpdateEducationJSON struct {
 
 type CreateAddressJSON struct {
 	Street       string `json:"street" binding:"required"`
-	Neighborhood string `json:"neighborhood" binding:"required"`
-	RuralArea    string `json:"rural_area" binding:"required"`
+	Neighborhood string `json:"neighborhood"`
+	RuralArea    string `json:"rural_area"`
 	SubDistrict  string `json:"sub_district" binding:"required"`
 	City         string `json:"city" binding:"required"`
 	Province     string `json:"province" binding:"required"`
@@ -241,8 +241,24 @@ func (c *CandidatesHandler) Update(context *gin.Context) {
 
 		if value != "" {
 			if fieldName == "date_of_birth" {
-				TimeLocationIndonesian, _ := time.LoadLocation("Asia/Jakarta")
-				parsedDateOfirth, _ := time.Parse(time.RFC3339, value.(string))
+				TimeLocationIndonesian, errLoadLocation := time.LoadLocation("Asia/Jakarta")
+				if errLoadLocation != nil {
+					context.JSON(http.StatusInternalServerError, gin.H{
+						"success": false,
+						"error":   errLoadLocation.Error(),
+						"message": "gagal memuat lokasi [Asia/Jakarta]",
+					})
+					return
+				}
+				parsedDateOfirth, errParseTime := time.Parse(time.RFC3339, value.(string))
+				if errParseTime != nil {
+					context.JSON(http.StatusInternalServerError, gin.H{
+						"success": false,
+						"error":   errParseTime.Error(),
+						"message": fmt.Sprintf("gagal parsing time: %s", value),
+					})
+					return
+				}
 				parsedToLocale := parsedDateOfirth.In(TimeLocationIndonesian)
 				mapCandidateFields[fieldName] = parsedToLocale
 			} else {
@@ -874,6 +890,7 @@ func (c *CandidatesHandler) GetById(context *gin.Context) {
 			for _, education := range m_candidate.Educations {
 				educationsMap = append(educationsMap, map[string]interface{}{
 					"university":   education.University,
+					"degree":       education.Degree,
 					"major":        education.Major,
 					"address":      education.Address,
 					"is_graduated": education.IsGraduated,

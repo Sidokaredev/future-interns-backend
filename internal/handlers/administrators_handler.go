@@ -1425,23 +1425,23 @@ func (h *AdministratorHandlers) GetNoCacheLogs(ctx *gin.Context) {
 		ctx.Abort()
 		return
 	}
-	typeQuery, isTypeExist := ctx.GetQuery("type")
-	if !isTypeExist {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "'type' query param is required",
-			"message": "please specify the logs type by adding 'type' query ['write' OR 'read']",
-		})
+	// typeQuery, isTypeExist := ctx.GetQuery("type")
+	// if !isTypeExist {
+	// 	ctx.JSON(http.StatusBadRequest, gin.H{
+	// 		"success": false,
+	// 		"error":   "'type' query param is required",
+	// 		"message": "please specify the logs type by adding 'type' query ['write' OR 'read']",
+	// 	})
 
-		ctx.Abort()
-		return
-	}
+	// 	ctx.Abort()
+	// 	return
+	// }
 
-	if typeQuery == "write" {
-		typeQuery = "no-cache-write"
-	} else {
-		typeQuery = "no-cache-read"
-	}
+	// if typeQuery == "write" {
+	// 	typeQuery = "no-cache-write"
+	// } else {
+	// 	typeQuery = "no-cache-read"
+	// }
 
 	gormDB, errGorm := initializer.GetGorm()
 	if errGorm != nil {
@@ -1467,9 +1467,9 @@ func (h *AdministratorHandlers) GetNoCacheLogs(ctx *gin.Context) {
 		CreatedAt           time.Time `json:"created_at"`
 		CacheSessionID      int       `json:"cache_session_id"`
 	}{}
-	getLogs := gormDB.Model(&models.RequestLog{}).Where("cache_session_id = ? AND cache_type = ?", sessionID, typeQuery).Order("created_at DESC").Limit(250).Find(&cacheLogs)
+	getLogs := gormDB.Model(&models.RequestLog{}).Where("cache_session_id = ? AND cache_type = ?", sessionID, "no-cache").Order("created_at ASC").Limit(250).Find(&cacheLogs)
 	if getLogs.RowsAffected == 0 {
-		log.Printf("cache logs with cache_session_id = %d and type = %s does not exist", sessionID, typeQuery)
+		log.Printf("cache logs with cache_session_id = %d and type = %s does not exist", sessionID, "no-cache")
 	}
 
 	type Dataset struct {

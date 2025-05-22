@@ -9,7 +9,7 @@ RUN go mod download
 
 COPY ./ ./
 
-RUN go build -ldflags="-extldflags '-static'" -o build/main-service main.go
+RUN go build -tags timetzdata -ldflags="-extldflags '-static'" -o build/main-service main.go
 
 # stage production
 FROM scratch
