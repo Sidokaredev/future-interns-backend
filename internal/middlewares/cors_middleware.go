@@ -13,7 +13,8 @@ func CORSPolicy() gin.HandlerFunc {
 		whitelisted := []string{
 			"http://localhost:5173",
 			"https://sidokaredev.github.io",
-			"http://54.198.53.107",
+			"https://sidokaredev.space",
+			"https://e-career.polije.sidokaredev.space",
 			"http://192.168.144.152",
 		}
 		for _, host := range whitelisted {
