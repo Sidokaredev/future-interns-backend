@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	initializer "go-write-behind-service/init"
+	"go-write-behind-service/internal/helpers"
 	"go-write-behind-service/internal/scheduler"
-	"log"
 	"net/http"
 	"reflect"
 	"time"
@@ -153,7 +153,7 @@ func (handler *VacancyHandler) WriteBehindService(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Set("CACHE_HIT", 0)
+	ctx.Set("CACHE_HIT", 1)
 	ctx.Set("CACHE_MISS", 0)
 	ctx.Set("CACHE_TYPE", "write-behind")
 
@@ -233,6 +233,7 @@ func (handler *VacancyHandler) UpdateWriteBehindService(ctx *gin.Context) {
 		return
 	}
 
+	ctx.Set("CACHE_HIT", 1)
 	ctx.Set("CACHE_TYPE", "write-behind")
 
 	ctx.JSON(http.StatusOK, gin.H{
@@ -241,25 +242,137 @@ func (handler *VacancyHandler) UpdateWriteBehindService(ctx *gin.Context) {
 	})
 }
 
+// func (handler *VacancyHandler) ReadWriteBehindService(ctx *gin.Context) {
+// 	ctx.Set("CACHE_HIT", 0)
+// 	ctx.Set("CACHE_MISS", 0)
+
+// 	lineIndustryQuery, _ := ctx.GetQuery("lineIndustry")
+// 	employeeTypeQuery, _ := ctx.GetQuery("employeeType")
+// 	workArrangement, _ := ctx.GetQuery("workArrangement")
+
+// 	rdb, errRdb := initializer.GetRedisDB()
+// 	if errRdb != nil {
+// 		ctx.Set("CACHE_TYPE", "invalid-write-behind")
+
+// 		ctx.JSON(http.StatusInternalServerError, gin.H{
+// 			"success": false,
+// 			"error":   errRdb.Error(),
+// 			"message": "fail getting Redis instance connection",
+// 		})
+// 		return
+// 	}
+
+// 	gormDB, errGorm := initializer.GetMssqlDB()
+// 	if errGorm != nil {
+// 		ctx.Set("CACHE_TYPE", "invalid-write-behind")
+
+// 		ctx.JSON(http.StatusInternalServerError, gin.H{
+// 			"success": false,
+// 			"error":   errGorm.Error(),
+// 			"message": "fail getting GORM instance connection",
+// 		})
+// 		return
+// 	}
+
+// 	indexes := [3]string{
+// 		fmt.Sprintf("index:%s", lineIndustryQuery),
+// 		fmt.Sprintf("index:%s", employeeTypeQuery),
+// 		fmt.Sprintf("index:%s", workArrangement),
+// 	}
+
+// 	rdbCtx := context.Background()
+// 	sizeInterCard, errInterCard := rdb.SInterCard(rdbCtx, 500, indexes[0], indexes[1], indexes[2]).Result()
+// 	if errInterCard != nil {
+// 		ctx.Set("CACHE_TYPE", "invalid-write-behind")
+
+// 		ctx.JSON(http.StatusInternalServerError, gin.H{
+// 			"success": false,
+// 			"error":   errInterCard.Error(),
+// 			"message": "fail counting intersection size",
+// 		})
+// 		return
+// 	}
+
+// 	log.Printf("%s&%s&%s", indexes[0], indexes[1], indexes[2])
+// 	if sizeInterCard < 500 {
+// 		log.Println("reading from database...")
+// 		ctx.Set("CACHE_HIT", 0)
+// 		ctx.Set("CACHE_MISS", 1)
+
+// 		queryParams := []interface{}{
+// 			fmt.Sprintf("%%%s%%", lineIndustryQuery),
+// 			fmt.Sprintf("%%%s%%", employeeTypeQuery),
+// 			fmt.Sprintf("%%%s%%", workArrangement),
+// 		}
+// 		vacancies, errRead := ReadFromDatabase(gormDB, queryParams...)
+// 		if errRead != nil {
+// 			ctx.Set("CACHE_TYPE", "invalid-write-behind")
+
+// 			ctx.JSON(http.StatusInternalServerError, gin.H{
+// 				"success": false,
+// 				"error":   errRead.Error(),
+// 				"message": "fail reading from database source",
+// 			})
+// 			return
+// 		}
+
+// 		ctx.Set("CACHE_TYPE", "write-behind")
+
+// 		ctx.JSON(http.StatusOK, gin.H{
+// 			"success": true,
+// 			"data":    vacancies,
+// 		})
+// 		return
+// 	}
+
+// 	sInter, errSInter := rdb.SInter(rdbCtx, indexes[0], indexes[1], indexes[2]).Result()
+// 	if errSInter != nil {
+// 		ctx.Set("CACHE_TYPE", "invalid-write-behind")
+
+// 		ctx.JSON(http.StatusInternalServerError, gin.H{
+// 			"success": false,
+// 			"error":   errSInter.Error(),
+// 			"message": "fail getting intersection values",
+// 		})
+// 		return
+// 	}
+
+// 	vacancies := []ReadVacancyProps{}
+// 	for _, key := range sInter {
+// 		var vacancy ReadVacancyProps
+
+// 		cmd := rdb.HGetAll(rdbCtx, key)
+// 		if errScanHash := cmd.Scan(&vacancy); errScanHash != nil {
+// 			ctx.Set("CACHE_TYPE", "invalid-write-behind")
+
+// 			ctx.JSON(http.StatusInternalServerError, gin.H{
+// 				"success": false,
+// 				"error":   errScanHash.Error(),
+// 				"message": "fail scanning hash field-value",
+// 			})
+// 			return
+// 		}
+
+// 		vacancies = append(vacancies, vacancy)
+// 	}
+
+// 	ctx.Set("CACHE_HIT", 1)
+// 	ctx.Set("CACHE_MISS", 0)
+// 	ctx.Set("CACHE_TYPE", "write-behind")
+
+// 	ctx.JSON(http.StatusOK, gin.H{
+// 		"success": true,
+// 		"data":    vacancies,
+// 	})
+// }
+
 func (handler *VacancyHandler) ReadWriteBehindService(ctx *gin.Context) {
 	ctx.Set("CACHE_HIT", 0)
 	ctx.Set("CACHE_MISS", 0)
 
 	lineIndustryQuery, _ := ctx.GetQuery("lineIndustry")
 	employeeTypeQuery, _ := ctx.GetQuery("employeeType")
-	workArrangement, _ := ctx.GetQuery("workArrangement")
-
-	rdb, errRdb := initializer.GetRedisDB()
-	if errRdb != nil {
-		ctx.Set("CACHE_TYPE", "invalid-write-behind")
-
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   errRdb.Error(),
-			"message": "fail getting Redis instance connection",
-		})
-		return
-	}
+	WorkArrangement, _ := ctx.GetQuery("workArrangement")
 
 	gormDB, errGorm := initializer.GetMssqlDB()
 	if errGorm != nil {
@@ -273,91 +386,73 @@ func (handler *VacancyHandler) ReadWriteBehindService(ctx *gin.Context) {
 		return
 	}
 
-	indexes := [3]string{
-		fmt.Sprintf("index:%s", lineIndustryQuery),
-		fmt.Sprintf("index:%s", employeeTypeQuery),
-		fmt.Sprintf("index:%s", workArrangement),
-	}
-
-	rdbCtx := context.Background()
-	sizeInterCard, errInterCard := rdb.SInterCard(rdbCtx, 500, indexes[0], indexes[1], indexes[2]).Result()
-	if errInterCard != nil {
+	sqlQuery := `
+		SELECT TOP(500)
+			id,
+			position,
+			description,
+			qualification,
+			responsibility,
+			line_industry,
+			employee_type,
+			min_experience,
+			salary,
+			work_arrangement,
+			sla,
+			is_inactive,
+			employer_id,
+			created_at
+		FROM
+			vacancies 
+		WHERE
+			line_industry LIKE ?
+			AND
+			employee_type LIKE ?
+			AND
+			work_arrangement LIKE ?
+		ORDER BY
+			created_at DESC
+	`
+	vacancies := []map[string]interface{}{}
+	getVacancies := gormDB.Raw(sqlQuery,
+		fmt.Sprintf("%%%s%%", lineIndustryQuery),
+		fmt.Sprintf("%%%s%%", employeeTypeQuery),
+		fmt.Sprintf("%%%s%%", WorkArrangement),
+	).Scan(&vacancies)
+	if getVacancies.Error != nil {
 		ctx.Set("CACHE_TYPE", "invalid-write-behind")
 
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   errInterCard.Error(),
-			"message": "fail counting intersection size",
+			"error":   getVacancies.Error.Error(),
+			"message": "there something went wrong with sql query",
 		})
 		return
 	}
 
-	log.Printf("%s&%s&%s", indexes[0], indexes[1], indexes[2])
-	if sizeInterCard < 500 {
-		log.Println("reading from database...")
-		ctx.Set("CACHE_HIT", 0)
-		ctx.Set("CACHE_MISS", 1)
-
-		queryParams := []interface{}{
-			fmt.Sprintf("%%%s%%", lineIndustryQuery),
-			fmt.Sprintf("%%%s%%", employeeTypeQuery),
-			fmt.Sprintf("%%%s%%", workArrangement),
-		}
-		vacancies, errRead := ReadFromDatabase(gormDB, queryParams...)
-		if errRead != nil {
-			ctx.Set("CACHE_TYPE", "invalid-write-behind")
-
-			ctx.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error":   errRead.Error(),
-				"message": "fail reading from database source",
-			})
-			return
-		}
-
-		ctx.Set("CACHE_TYPE", "write-behind")
-
-		ctx.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"data":    vacancies,
-		})
-		return
-	}
-
-	sInter, errSInter := rdb.SInter(rdbCtx, indexes[0], indexes[1], indexes[2]).Result()
-	if errSInter != nil {
-		ctx.Set("CACHE_TYPE", "invalid-write-behind")
-
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   errSInter.Error(),
-			"message": "fail getting intersection values",
-		})
-		return
-	}
-
-	vacancies := []ReadVacancyProps{}
-	for _, key := range sInter {
-		var vacancy ReadVacancyProps
-
-		cmd := rdb.HGetAll(rdbCtx, key)
-		if errScanHash := cmd.Scan(&vacancy); errScanHash != nil {
-			ctx.Set("CACHE_TYPE", "invalid-write-behind")
-
-			ctx.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error":   errScanHash.Error(),
-				"message": "fail scanning hash field-value",
-			})
-			return
-		}
-
-		vacancies = append(vacancies, vacancy)
-	}
-
-	ctx.Set("CACHE_HIT", 1)
-	ctx.Set("CACHE_MISS", 0)
 	ctx.Set("CACHE_TYPE", "write-behind")
+
+	employerKeys := []string{
+		"employer_id",
+		"name",
+		"legal_name",
+		"location",
+		"profile_image_id",
+	}
+	for _, vacancy := range vacancies {
+		employer := map[string]interface{}{}
+		for _, key := range employerKeys {
+			if key == "employer_id" {
+				employer["id"] = vacancy[key]
+				delete(vacancy, key)
+				continue
+			}
+			employer[key] = vacancy[key]
+			delete(vacancy, key)
+		}
+		helpers.TransformsIdToPath([]string{"profile_image_id"}, employer)
+		vacancy["employer"] = employer
+	}
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
