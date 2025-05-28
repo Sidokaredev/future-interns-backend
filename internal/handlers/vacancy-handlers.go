@@ -611,6 +611,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 	}
 
 	rdbCtx := context.Background()
+	log.Printf("FINDING INDEX \t: %s | %s | %s", indexes[0], indexes[1], indexes[2])
 	sizeInterCard, errInterCard := rdb.SInterCard(rdbCtx, 500, indexes[0], indexes[1], indexes[2]).Result()
 	if errInterCard != nil {
 		ctx.Set("CACHE_TYPE", "invalid-read-through")
@@ -623,6 +624,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 		return
 	}
 	if sizeInterCard < 500 {
+		log.Println("INTERSECTION LESS THAN 500!!!")
 		log.Println("reading from database...")
 		ctx.Set("CACHE_HIT", 0)
 		ctx.Set("CACHE_MISS", 1)
@@ -677,6 +679,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 			return
 		}
 	}
+	log.Println("INTERSECTION MORE THAN EQUAL 500!!!")
 
 	sInter, errSInter := rdb.SInter(rdbCtx, indexes[0], indexes[1], indexes[2]).Result()
 	if errSInter != nil {
@@ -691,7 +694,8 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 	}
 
 	vacancies := []VacancyProps{}
-	for _, key := range sInter {
+	emptyPropsAtIndex := []int{}
+	for idx, key := range sInter {
 		var vacancy VacancyProps
 
 		cmd := rdb.HGetAll(rdbCtx, key)
@@ -706,8 +710,13 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 			return
 		}
 
+		if vacancy.ID == "" {
+			emptyPropsAtIndex = append(emptyPropsAtIndex, idx)
+		}
+
 		vacancies = append(vacancies, vacancy)
 	}
+	log.Printf("EMPTY PROPS INDEX \t: %v", emptyPropsAtIndex)
 
 	ctx.Set("CACHE_HIT", 1)
 	ctx.Set("CACHE_MISS", 0)
