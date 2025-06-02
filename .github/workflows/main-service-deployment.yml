@@ -39,5 +39,6 @@ jobs:
           tags: |
             ghcr.io/${{ env.REPO_NAME }}:main-service-latest
           platforms: linux/amd64
+          provenance: false
           cache-from: type=gha
           cache-to: type=gha
