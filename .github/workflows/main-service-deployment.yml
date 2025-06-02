@@ -4,6 +4,8 @@ on:
   push:
     branches:
     - 'main'
+env:
+  REPO_NAME: sidokaredev/future-interns-backend
 permissions:
   contents: read
   packages: write
@@ -36,7 +38,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:main-service-latest
-            ghcr.io/${{ github.repository }}:main-service-${{ github.sha }}
+            ghcr.io/${{ env.REPO_NAME }}:main-service-latest
+            ghcr.io/${{ env.REPO_NAME }}:main-service-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha
