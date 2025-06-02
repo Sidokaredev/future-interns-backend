@@ -38,5 +38,6 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ env.REPO_NAME }}:main-service-latest
+          platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha
