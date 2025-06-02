@@ -6,7 +6,7 @@ on:
     - 'main'
 env:
   REPO_NAME: sidokaredev/future-interns-backend
-  IMAGE: ghcr.io/${{ env.REPO_NAME }}:main-service-latest
+  IMAGE: 'ghcr.io/${{ env.REPO_NAME }}:main-service-latest'
 permissions:
   contents: read
   packages: write
