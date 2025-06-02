@@ -6,7 +6,6 @@ on:
     - 'main'
 env:
   REPO_NAME: sidokaredev/future-interns-backend
-  IMAGE: 'ghcr.io/${{ env.REPO_NAME }}:main-service-latest'
 permissions:
   contents: read
   packages: write
@@ -55,5 +54,5 @@ jobs:
           username: ${{ secrets.NEOLITEVPS_USER }}
           key: ${{ secrets.NEOLITEVPS_SSH_PRIVATE_KEY }}
           script: |
-            docker pull ${{ env.IMAGE }}
+            docker pull ghcr.io/${{ env.REPO_NAME }}:main-service-latest
         
