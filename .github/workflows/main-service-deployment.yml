@@ -1,58 +1,87 @@
-name: Main Service Deployment
-run-name: Action workflow for main-service on ATS
+name: Service Deployment
+run-name: Action workflow on ATS services
 on:
   push:
     branches:
     - 'main'
+    - 'cache_aside'
+    - 'read_through'
+    - 'write_through'
+    - 'write_behind'
 env:
   REPO_NAME: sidokaredev/future-interns-backend
 permissions:
   contents: read
   packages: write
 jobs:
-  #build-and-push-image:
-  #  runs-on: ubuntu-22.04
-  #  name: building code as package, then push to ghcr.io
-  #  steps:
-  #    - name: Runner working directory
-  #      run: 'echo "Working directory: $GITHUB_WORKSPACE"'
-        
+  build-and-push-image:
+    runs-on: ubuntu-22.04
+    name: Building package and push
+    outputs:
+      container_image_tag: ${{ steps.setter_tag.outputs.image_tag }}
+    steps: 
       #- name: Checkout main-service code
       #  uses: actions/checkout@v4
       #  with:
       #    ref: 'main'
+      - name: Determine image name by branch trigger
+        id: setter_tag
+        run: |
+          BRANCH_TRIGGER="${{ github.ref_name }}"
+          echo "Ref Name: $BRANCH_TRIGGER"
+          IMAGE_TAG=""
+
+          if [[ "$BRANCH_TRIGGER" == "cache_aside" ]]; then
+            IMAGE_TAG="cache-aside"
+          elif [[ "$BRANCH_TRIGGER" == "read_through" ]]; then
+            IMAGE_TAG="read-through"
+          elif [[ "$BRANCH_TRIGGER" == "write_through" ]]; then
+            IMAGE_TAG="write-through"
+          elif [[ "$BRANCH_TRIGGER" == "write_behind" ]]; then
+            IMAGE_TAG="write-behind"
+          else
+            IMAGE_TAG="$BRANCH_NAME"
+          fi
+
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "image tag result:$IMAGE_TAG"
           
-   #   - name: Setup docker buildx
-   #     uses: docker/setup-buildx-action@v3
+      #- name: Setup docker buildx
+      #  uses: docker/setup-buildx-action@v3
 
-   #   - name: Login into ghcr.io
-   #     uses: docker/login-action@v3
-   #     with:
-   #       registry: ghcr.io
-   #       username: ${{ github.actor }}
-   #       password: ${{ secrets.GITHUB_TOKEN }}
+      #- name: Login into ghcr.io
+      #  uses: docker/login-action@v3
+      #  with:
+      #    registry: ghcr.io
+      #    username: ${{ github.actor }}
+      #    password: ${{ secrets.GITHUB_TOKEN }}
 
-   #   - name: Build and push image to ghcr.io
-   #     uses: docker/build-push-action@v6
-   #     with:
-   #       push: true
-   #       tags: |
-   #         ghcr.io/${{ env.REPO_NAME }}:main-service-latest
-   #       platforms: linux/amd64
-   #       provenance: false
-   #       cache-from: type=gha
-   #       cache-to: type=gha
+      #- name: Build and push image to ghcr.io
+      #  uses: docker/build-push-action@v6
+      #  with:
+      #    push: true
+      #    tags: |
+      #      ghcr.io/${{ env.REPO_NAME }}:main-service-latest
+      #    platforms: linux/amd64
+      #    provenance: false
+      #    cache-from: type=gha
+      #    cache-to: type=gha
 
-  pull-and-deploy:
-    runs-on: ubuntu-22.04
-    name: pulling image from ghcr.io, then deploy
-    steps:
-      - name: SSH into Neolite VPS
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.NEOLITEVPS_HOST }}
-          username: ${{ secrets.NEOLITEVPS_USER }}
-          key: ${{ secrets.NEOLITEVPS_SSH_PRIVATE_KEY }}
-          script: |
-            docker pull ghcr.io/${{ env.REPO_NAME }}:main-service-latest
+  #pull-and-deploy:
+  #  runs-on: ubuntu-22.04
+  #  name: pulling image from ghcr.io, then deploy
+  #  steps:
+  #    - name: SSH into Neolite VPS
+  #      uses: appleboy/ssh-action@v1
+  #      with:
+  #        host: ${{ secrets.NEOLITEVPS_HOST }}
+  #        username: ${{ secrets.NEOLITEVPS_USER }}
+  #        key: ${{ secrets.NEOLITEVPS_SSH_PRIVATE_KEY }}
+  #        script: |
+  #          cd container-configs/
+  #          docker pull ghcr.io/${{ env.REPO_NAME }}:main-service-latest
+  #          docker compose stop main_service
+  #          docker compose rm main_service
+  #          docker compose up -d main_service
+  #          docker compose exec nginx-front_end nginx -s reload
         
