@@ -1,0 +1,42 @@
+name: Main Service Deployment
+run-name: Action workflow for main-service on ATS
+on:
+  push:
+    branches:
+    - 'main'
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-22.04
+    name: building code as package, then push to ghcr.io
+    steps:
+      - name: Runner working directory
+        run: 'echo "Working directory: $GITHUB_WORKSPACE"'
+        
+      #- name: Checkout main-service code
+      #  uses: actions/checkout@v4
+      #  with:
+      #    ref: 'main'
+          
+      - name: Setup docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login into ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image to ghcr.io
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/main-service:latest
+            ghcr.io/${{ github.repository_owner }}/main-service:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha
