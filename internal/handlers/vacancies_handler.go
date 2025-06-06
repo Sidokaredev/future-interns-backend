@@ -69,9 +69,25 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 
 	var vacancies []map[string]interface{}
 	var applied []string
+	var vacanciesCount int64
 
 	gormDB, _ := initializer.GetGorm()
 	errGetVacancies := gormDB.Transaction(func(tx *gorm.DB) error {
+		errCountVacancies := tx.Model(&models.Vacancy{}).
+			Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
+			Order("vacancies.created_at DESC").
+			Where(`vacancies.is_inactive = ? AND
+			employers.location LIKE ? AND
+			(vacancies.position LIKE ? OR
+			vacancies.description LIKE ? OR
+			vacancies.qualification LIKE ? OR
+			vacancies.responsibility LIKE ?) AND
+			vacancies.line_industry LIKE ? AND
+			vacancies.employee_type LIKE ?`, false, location, keyword, keyword, keyword, keyword, lineIndustry, employeeType).
+			Count(&vacanciesCount).Error
+		if errCountVacancies != nil {
+			return errCountVacancies
+		}
 		errGetVacanciesList := tx.Model(&models.Vacancy{}).Select([]string{
 			"vacancies.id",
 			"vacancies.position",
@@ -93,8 +109,17 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 		}).
 			Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
 			Order("vacancies.created_at DESC").
-			Where("vacancies.is_inactive = ? AND employers.location LIKE ? AND (vacancies.position LIKE ? OR vacancies.description LIKE ? OR vacancies.qualification LIKE ? OR vacancies.responsibility LIKE ?) AND vacancies.line_industry LIKE ? AND vacancies.employee_type LIKE ?", false, location, keyword, keyword, keyword, keyword, lineIndustry, employeeType).
-			Limit(limit).Offset(offset).Find(&vacancies)
+			Where(`vacancies.is_inactive = ? AND
+						 employers.location LIKE ? AND
+						 (vacancies.position LIKE ? OR
+						 vacancies.description LIKE ? OR
+						 vacancies.qualification LIKE ? OR
+						 vacancies.responsibility LIKE ?) AND
+						 vacancies.line_industry LIKE ? AND
+						 vacancies.employee_type LIKE ?`, false, location, keyword, keyword, keyword, keyword, lineIndustry, employeeType).
+			Limit(limit).
+			Offset(offset).
+			Find(&vacancies)
 
 		if errGetVacanciesList.Error != nil {
 			return errGetVacanciesList.Error
@@ -153,6 +178,7 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 		"data": gin.H{
 			"vacancies": vacancies,
 			"applied":   applied,
+			"count":     vacanciesCount,
 		},
 	})
 }

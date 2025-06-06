@@ -2720,13 +2720,34 @@ func (c *CandidatesHandler) ListPipeline(ctx *gin.Context) {
 	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
 	claims := ParseJWT(bearerToken)
 
+	pageQuery, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	offsetRows := (pageQuery * 5) - 5
+	keywordQuery := fmt.Sprintf("%%%s%%", strings.TrimSpace(ctx.Query("keyword")))
+
 	listApplied := []map[string]interface{}{}
+	var appliedCount int64
 	gormDB, _ := initializer.GetGorm()
 	errListApplied := gormDB.Transaction(func(tx *gorm.DB) error {
 		var candidateID string
 		errGetCandidateID := tx.Model(&models.Candidate{}).Select([]string{"id"}).Where("user_id = ?", claims.Id).First(&candidateID).Error
 		if errGetCandidateID != nil {
 			return errGetCandidateID
+		}
+
+		appliedCountError := tx.Model(&models.Pipeline{}).
+			Joins(`
+			INNER JOIN vacancies ON vacancies.id = pipelines.vacancy_id AND vacancies.deleted_at IS NULL
+			INNER JOIN employers ON employers.id = vacancies.employer_id
+		`).
+			Where(`pipelines.candidate_id = ? AND
+						(vacancies.position LIKE ? OR
+						employers.name LIKE ? OR
+						employers.legal_name LIKE ? OR
+						employers.location LIKE ? OR
+						pipeline.status LIKE ?)`, candidateID, keywordQuery, keywordQuery, keywordQuery, keywordQuery, keywordQuery).
+			Count(&appliedCount).Error
+		if appliedCountError != nil {
+			return appliedCountError
 		}
 
 		getApplied := tx.Model(&models.Pipeline{}).Select([]string{
@@ -2751,7 +2772,13 @@ func (c *CandidatesHandler) ListPipeline(ctx *gin.Context) {
 		}).Joins(`
 			INNER JOIN vacancies ON vacancies.id = pipelines.vacancy_id AND vacancies.deleted_at IS NULL
 			INNER JOIN employers ON employers.id = vacancies.employer_id
-		`).Where("candidate_id = ?", candidateID).
+		`).Where(`pipelines.candidate_id = ? AND
+							(vacancies.position LIKE ? OR
+							employers.name LIKE ? OR
+							employers.legal_name LIKE ? OR
+							employers.location LIKE ? OR
+							pipeline.status LIKE ?)`, candidateID, keywordQuery, keywordQuery, keywordQuery, keywordQuery, keywordQuery).
+			Limit(5).Offset(offsetRows).
 			Find(&listApplied)
 
 		if getApplied.RowsAffected == 0 {
@@ -2803,7 +2830,10 @@ func (c *CandidatesHandler) ListPipeline(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    listApplied,
+		"data": gin.H{
+			"arr":   listApplied,
+			"count": appliedCount,
+		},
 	})
 }
 

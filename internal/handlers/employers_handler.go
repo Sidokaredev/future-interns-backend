@@ -1666,7 +1666,30 @@ func (e *EmployerHandlers) ListVacancy(ctx *gin.Context) {
 	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
 	claims := ParseJWT(bearerToken)
 
+	type Filters struct {
+		LineIndustry    string `form:"line_industry"`
+		EmployeeType    string `form:"employee_type"`
+		MinExperience   string `form:"min_experience"`
+		WorkArrangement string `form:"work_arrangement"`
+	}
+
+	pageQuery, _ := strconv.Atoi(strings.TrimSpace(ctx.DefaultQuery("page", "1")))
+	offsetRows := (pageQuery*10 - 10)
+	keywordQuery := strings.TrimSpace(ctx.Query("keyword"))
+
+	var filtersQuery Filters
+	if errBindQueryParams := ctx.ShouldBindQuery(&filtersQuery); errBindQueryParams != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   errBindQueryParams.Error(),
+			"message": "terdapat kesalahan query parameter",
+		})
+
+		return
+	}
+
 	listVacancies := []map[string]interface{}{}
+	var vacanciesCount int64
 	gormDB, _ := initializer.GetGorm()
 	errListVacanciesByEmployerId := gormDB.Transaction(func(tx *gorm.DB) error {
 		employer := map[string]interface{}{}
@@ -1692,6 +1715,19 @@ func (e *EmployerHandlers) ListVacancy(ctx *gin.Context) {
 			return errUpdatingSLA.Error
 		}
 
+		errVacanciesCount := tx.Model(&models.Vacancy{}).
+			Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
+			Where(`vacancies.employer_id = ? AND
+						 vacancies.position LIKE ? AND
+						 vacancies.line_industry LIKE ? AND
+						 vacancies.employee_type LIKE ? AND
+						 vacancies.min_experience LIKE ? AND
+						 vacancies.work_arrangement LIKE ?`, employer["id"], keywordQuery, filtersQuery.LineIndustry, filtersQuery.EmployeeType, filtersQuery.MinExperience, filtersQuery.WorkArrangement).
+			Count(&vacanciesCount).Error
+		if errVacanciesCount != nil {
+			return errVacanciesCount
+		}
+
 		getVacancies := tx.Model(&models.Vacancy{}).
 			Select([]string{
 				"vacancies.id",
@@ -1712,7 +1748,15 @@ func (e *EmployerHandlers) ListVacancy(ctx *gin.Context) {
 				"employers.location",
 				"employers.profile_image_id",
 			}).Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
-			Where("employer_id = ?", employer["id"]).Find(&listVacancies)
+			Where(`vacancies.employer_id = ? AND
+						 vacancies.position LIKE ? AND
+						 vacancies.line_industry LIKE ? AND
+						 vacancies.employee_type LIKE ? AND
+						 vacancies.min_experience LIKE ? AND
+						 vacancies.work_arrangement LIKE ?`, employer["id"], keywordQuery, filtersQuery.LineIndustry, filtersQuery.EmployeeType, filtersQuery.MinExperience, filtersQuery.WorkArrangement).
+			Limit(10).
+			Offset(offsetRows).
+			Find(&listVacancies)
 		if getVacancies.RowsAffected == 0 {
 			return fmt.Errorf("no vacancy data found for employer id: %v", employer["id"])
 		}
@@ -1764,7 +1808,10 @@ func (e *EmployerHandlers) ListVacancy(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    vacancies,
+		"data": gin.H{
+			"arr":   vacancies,
+			"count": vacanciesCount,
+		},
 	})
 }
 
@@ -2731,7 +2778,7 @@ func (e *EmployerHandlers) GetApplicantInterview(ctx *gin.Context) {
 					interviews.pipeline_id = pipelines.id
 					AND
 					interviews.vacancy_id = ?
-				ORDER BY interviews.date ASC
+				ORDER BY interviews.date DESC
 				FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
 			) AS interview
 		FROM

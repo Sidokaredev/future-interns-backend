@@ -518,7 +518,7 @@ func (h *AccountsHandler) MakeRandomAccounts(ctx *gin.Context) {
 			}
 
 			errStoreIdentities := tx.CreateInBatches(&m_identities, 50).Error
-			if errStoreCandidates != nil {
+			if errStoreIdentities != nil {
 				return errStoreIdentities
 			}
 
