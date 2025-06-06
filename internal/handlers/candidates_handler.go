@@ -2744,7 +2744,7 @@ func (c *CandidatesHandler) ListPipeline(ctx *gin.Context) {
 						employers.name LIKE ? OR
 						employers.legal_name LIKE ? OR
 						employers.location LIKE ? OR
-						pipeline.status LIKE ?)`, candidateID, keywordQuery, keywordQuery, keywordQuery, keywordQuery, keywordQuery).
+						pipelines.status LIKE ?)`, candidateID, keywordQuery, keywordQuery, keywordQuery, keywordQuery, keywordQuery).
 			Count(&appliedCount).Error
 		if appliedCountError != nil {
 			return appliedCountError
@@ -2777,7 +2777,7 @@ func (c *CandidatesHandler) ListPipeline(ctx *gin.Context) {
 							employers.name LIKE ? OR
 							employers.legal_name LIKE ? OR
 							employers.location LIKE ? OR
-							pipeline.status LIKE ?)`, candidateID, keywordQuery, keywordQuery, keywordQuery, keywordQuery, keywordQuery).
+							pipelines.status LIKE ?)`, candidateID, keywordQuery, keywordQuery, keywordQuery, keywordQuery, keywordQuery).
 			Limit(5).Offset(offsetRows).
 			Find(&listApplied)
 
