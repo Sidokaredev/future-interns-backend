@@ -1675,7 +1675,7 @@ func (e *EmployerHandlers) ListVacancy(ctx *gin.Context) {
 
 	pageQuery, _ := strconv.Atoi(strings.TrimSpace(ctx.DefaultQuery("page", "1")))
 	offsetRows := (pageQuery*10 - 10)
-	keywordQuery := strings.TrimSpace(ctx.Query("keyword"))
+	keywordQuery := fmt.Sprintf("%%%s%%", strings.TrimSpace(ctx.Query("keyword")))
 
 	var filtersQuery Filters
 	if errBindQueryParams := ctx.ShouldBindQuery(&filtersQuery); errBindQueryParams != nil {
