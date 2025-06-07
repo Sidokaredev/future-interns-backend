@@ -1696,7 +1696,7 @@ func (e *EmployerHandlers) ListVacancy(ctx *gin.Context) {
 			field.SetString(formatted)
 		}
 	}
-	log.Printf("page: %v | offset rows: %v ", pageQuery, offsetRows)
+	log.Printf("page: %v | offset rows: %v | keyword: %s", pageQuery, offsetRows, keywordQuery)
 	log.Println("filters: ", filtersQuery)
 
 	listVacancies := []map[string]interface{}{}
@@ -1769,6 +1769,7 @@ func (e *EmployerHandlers) ListVacancy(ctx *gin.Context) {
 			Offset(offsetRows).
 			Find(&listVacancies)
 		log.Println("query string: ", getVacancies.Statement.SQL.String())
+		log.Println("list vacancies: ", listVacancies)
 		if getVacancies.RowsAffected == 0 {
 			return fmt.Errorf("no vacancy data found for employer id: %v", employer["id"])
 		}
