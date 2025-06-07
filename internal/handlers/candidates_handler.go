@@ -2770,14 +2770,16 @@ func (c *CandidatesHandler) ListPipeline(ctx *gin.Context) {
 			"employers.location",
 			"employers.profile_image_id",
 		}).Joins(`
-			INNER JOIN vacancies ON vacancies.id = pipelines.vacancy_id AND vacancies.deleted_at IS NULL
-			INNER JOIN employers ON employers.id = vacancies.employer_id
-		`).Where(`pipelines.candidate_id = ? AND
-							(vacancies.position LIKE ? OR
-							employers.name LIKE ? OR
-							employers.legal_name LIKE ? OR
-							employers.location LIKE ? OR
-							pipelines.status LIKE ?)`, candidateID, keywordQuery, keywordQuery, keywordQuery, keywordQuery, keywordQuery).
+		INNER JOIN vacancies ON vacancies.id = pipelines.vacancy_id AND vacancies.deleted_at IS NULL
+		INNER JOIN employers ON employers.id = vacancies.employer_id
+	`).
+			Order("pipelines.created_at DESC").
+			Where(`pipelines.candidate_id = ? AND
+					(vacancies.position LIKE ? OR
+					employers.name LIKE ? OR
+					employers.legal_name LIKE ? OR
+					employers.location LIKE ? OR
+					pipelines.status LIKE ?)`, candidateID, keywordQuery, keywordQuery, keywordQuery, keywordQuery, keywordQuery).
 			Limit(5).Offset(offsetRows).
 			Find(&listApplied)
 

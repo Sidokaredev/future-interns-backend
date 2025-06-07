@@ -1687,6 +1687,15 @@ func (e *EmployerHandlers) ListVacancy(ctx *gin.Context) {
 
 		return
 	}
+	v := reflect.ValueOf(&filtersQuery).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		if field.Kind() == reflect.String && field.CanSet() {
+			original := field.String()
+			formatted := fmt.Sprintf("%%%s%%", original)
+			field.SetString(formatted)
+		}
+	}
 
 	listVacancies := []map[string]interface{}{}
 	var vacanciesCount int64
