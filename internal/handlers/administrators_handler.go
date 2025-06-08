@@ -1640,7 +1640,6 @@ func (h *AdministratorHandlers) GetPerformanceTestResults(ctx *gin.Context) {
 	var sessionsResultCount int64
 	sessionResultQueries := gormDB.Transaction(func(tx *gorm.DB) error {
 		countCacheSessions := tx.Model(&models.CacheSession{}).
-			Joins("LEFT JOIN request_logs ON request_logs.cache_session_id = cache_sessions.id").
 			Where("cache_sessions.label LIKE ?", labelQuery).
 			Count(&sessionsResultCount)
 		if countCacheSessions.Error != nil {
