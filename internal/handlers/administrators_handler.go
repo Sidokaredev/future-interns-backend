@@ -1604,6 +1604,11 @@ func (h *AdministratorHandlers) GetNoCacheLogs(ctx *gin.Context) {
 
 /* DASHBOARD */
 func (h *AdministratorHandlers) GetPerformanceTestResults(ctx *gin.Context) {
+	pageQuery, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	labelQuery := fmt.Sprintf("%%%s%%", ctx.DefaultQuery("label", ""))
+	const data_per_request int = 10
+	offsetRows := (pageQuery * data_per_request) - data_per_request
+
 	gormDB, errGorm := initializer.GetGorm()
 	if errGorm != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
@@ -1632,26 +1637,45 @@ func (h *AdministratorHandlers) GetPerformanceTestResults(ctx *gin.Context) {
 	}
 
 	sessionsResult := []SessionTestResults{}
-	getSessionsResult := gormDB.Model(&models.CacheSession{}).Select([]string{
-		"cache_sessions.id",
-		"cache_sessions.label",
-		// "cache_sessions.status",
-		"cache_sessions.created_at",
-		"SUM(request_logs.cache_hit) AS total_of_cache_hit",
-		"COUNT(request_logs.cache_hit) AS number_of_cache_hit",
-		"SUM(request_logs.cache_miss) AS total_of_cache_miss",
-		"COUNT(request_logs.cache_miss) AS number_of_cache_miss",
-		"AVG(request_logs.response_time) AS avg_response_time",
-		"AVG(request_logs.memory_usage) AS avg_memory_usage",
-		"AVG(request_logs.cpu_usage) AS avg_cpu_usage",
-		"AVG(request_logs.resource_utilization) AS avg_resource_utilization",
-	}).Joins("LEFT JOIN request_logs ON request_logs.cache_session_id = cache_sessions.id").
-		Group("cache_sessions.id, cache_sessions.label, cache_sessions.created_at").Find(&sessionsResult)
+	var sessionsResultCount int64
+	sessionResultQueries := gormDB.Transaction(func(tx *gorm.DB) error {
+		countCacheSessions := tx.Model(&models.CacheSession{}).
+			Joins("LEFT JOIN request_logs ON request_logs.cache_session_id = cache_sessions.id").
+			Where("cache_sessions.label LIKE ?", labelQuery).
+			Count(&sessionsResultCount)
+		if countCacheSessions.Error != nil {
+			return countCacheSessions.Error
+		}
+		selectCacheSessions := tx.Model(&models.CacheSession{}).Select([]string{
+			"cache_sessions.id",
+			"cache_sessions.label",
+			// "cache_sessions.status",
+			"cache_sessions.created_at",
+			"SUM(request_logs.cache_hit) AS total_of_cache_hit",
+			"COUNT(request_logs.cache_hit) AS number_of_cache_hit",
+			"SUM(request_logs.cache_miss) AS total_of_cache_miss",
+			"COUNT(request_logs.cache_miss) AS number_of_cache_miss",
+			"AVG(request_logs.response_time) AS avg_response_time",
+			"AVG(request_logs.memory_usage) AS avg_memory_usage",
+			"AVG(request_logs.cpu_usage) AS avg_cpu_usage",
+			"AVG(request_logs.resource_utilization) AS avg_resource_utilization",
+		}).Joins("LEFT JOIN request_logs ON request_logs.cache_session_id = cache_sessions.id").
+			Where("cache_sessions.label LIKE ?", labelQuery).
+			Group("cache_sessions.id, cache_sessions.label, cache_sessions.created_at").
+			Order("cache_sessions.id ASC").
+			Offset(offsetRows).
+			Limit(data_per_request).
+			Find(&sessionsResult)
+		if selectCacheSessions.Error != nil {
+			return selectCacheSessions.Error
+		}
+		return nil
+	})
 
-	if getSessionsResult.Error != nil {
+	if sessionResultQueries != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   getSessionsResult.Error.Error(),
+			"error":   sessionResultQueries.Error(),
 			"message": "error sql server query",
 		})
 
@@ -1672,6 +1696,9 @@ func (h *AdministratorHandlers) GetPerformanceTestResults(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    sessionsResult,
+		"data": gin.H{
+			"arr":   sessionsResult,
+			"count": sessionsResultCount,
+		},
 	})
 }
