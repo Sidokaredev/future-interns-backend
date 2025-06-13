@@ -612,6 +612,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 
 	rdbCtx := context.Background()
 	log.Printf("FINDING INDEX \t: %s | %s | %s", indexes[0], indexes[1], indexes[2])
+
 	sizeInterCard, errInterCard := rdb.SInterCard(rdbCtx, 500, indexes[0], indexes[1], indexes[2]).Result()
 	if errInterCard != nil {
 		ctx.Set("CACHE_TYPE", "invalid-read-through")
@@ -624,7 +625,6 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 		return
 	}
 	if sizeInterCard < 500 {
-		log.Println("INTERSECTION LESS THAN 500!!!")
 		log.Println("reading from database...")
 		ctx.Set("CACHE_HIT", 0)
 		ctx.Set("CACHE_MISS", 1)
@@ -650,15 +650,22 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 		keysCollection := []string{}
 		for _, vacancy := range vacancies {
 			hfields := []string{}
+			hfieldValues := []interface{}{}
 
+			values := reflect.ValueOf(vacancy)
 			props := reflect.TypeOf(vacancy)
-			for idx := 0; idx < props.NumField(); idx++ {
-				structTag := props.Field(idx).Tag.Get("json")
+
+			for i := 0; i < props.NumField(); i++ {
+				structTag := props.Field(i).Tag.Get("json")
 				hfields = append(hfields, structTag)
+
+				value := values.Field(i)
+				hfieldValues = append(hfieldValues, structTag, value.Interface())
 			}
 
 			key := fmt.Sprintf("RT:%s", vacancy.ID)
-			pipe.HSet(rdbCtx, key, vacancy)
+			// pipe.HSet(rdbCtx, key, vacancy)
+			pipe.HSet(rdbCtx, key, hfieldValues)
 			pipe.HExpire(rdbCtx, key, 30*time.Minute, hfields...)
 
 			keysCollection = append(keysCollection, key)
@@ -679,7 +686,6 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 			return
 		}
 	}
-	log.Println("INTERSECTION MORE THAN EQUAL 500!!!")
 
 	sInter, errSInter := rdb.SInter(rdbCtx, indexes[0], indexes[1], indexes[2]).Result()
 	if errSInter != nil {
@@ -694,8 +700,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 	}
 
 	vacancies := []VacancyProps{}
-	emptyPropsAtIndex := []int{}
-	for idx, key := range sInter {
+	for _, key := range sInter {
 		var vacancy VacancyProps
 
 		cmd := rdb.HGetAll(rdbCtx, key)
@@ -710,13 +715,8 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 			return
 		}
 
-		if vacancy.ID == "" {
-			emptyPropsAtIndex = append(emptyPropsAtIndex, idx)
-		}
-
 		vacancies = append(vacancies, vacancy)
 	}
-	log.Printf("EMPTY PROPS INDEX \t: %v", emptyPropsAtIndex)
 
 	ctx.Set("CACHE_HIT", 1)
 	ctx.Set("CACHE_MISS", 0)
