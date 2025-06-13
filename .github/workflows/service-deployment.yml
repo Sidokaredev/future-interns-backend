@@ -38,6 +38,9 @@ jobs:
           elif [[ "$BRANCH_TRIGGER" == "write_behind" ]]; then
             IMAGE_TAG="write-behind"
             SERVICE_NAME="write_behind"
+          elif [[ "$BRANCH_TRIGGER" == "no_cache" ]]; then
+            IMAGE_TAG="no-cache"
+            SERVICE_NAME="no_cache"
           else
             IMAGE_TAG="$BRANCH_TRIGGER"
             SERVICE_NAME="main_service"
