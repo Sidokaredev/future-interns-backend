@@ -3,9 +3,11 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-COPY ./ ./
+COPY go.mod go.sum ./
 
 RUN go mod download
+
+COPY ./ ./
 
 RUN go build -ldflags="-extldflags '-static'" -o build/migration main.go
 
