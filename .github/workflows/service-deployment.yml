@@ -1,0 +1,95 @@
+name: Write Through Service Deployment
+run-name: Action workflow on ATS services@write-through
+on:
+  push:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-22.04
+    name: Building package and push
+    outputs:
+      container_image_tag: ${{ steps.determiner.outputs.image_tag }}
+      service_name: ${{ steps.determiner.outputs.service_name }}
+    steps: 
+      #- name: Checkout main-service code
+      #  uses: actions/checkout@v4
+      #  with:
+      #    ref: 'main'
+      
+      - name: Determine image and service name by branch trigger
+        id: determiner
+        run: |
+          BRANCH_TRIGGER="${{ github.ref_name }}"
+          echo "Ref Name: $BRANCH_TRIGGER"
+          IMAGE_TAG=""
+          SERVICE_NAME=""
+          if [[ "$BRANCH_TRIGGER" == "cache_aside" ]]; then
+            IMAGE_TAG="cache-aside"
+            SERVICE_NAME="cache_aside"
+          elif [[ "$BRANCH_TRIGGER" == "read_through" ]]; then
+            IMAGE_TAG="read-through"
+            SERVICE_NAME="read_through"
+          elif [[ "$BRANCH_TRIGGER" == "write_through" ]]; then
+            IMAGE_TAG="write-through"
+            SERVICE_NAME="write_through"
+          elif [[ "$BRANCH_TRIGGER" == "write_behind" ]]; then
+            IMAGE_TAG="write-behind"
+            SERVICE_NAME="write_behind"
+          elif [[ "$BRANCH_TRIGGER" == "no_cache" ]]; then
+            IMAGE_TAG="no-cache"
+            SERVICE_NAME="no_cache"
+          else
+            IMAGE_TAG="$BRANCH_TRIGGER"
+            SERVICE_NAME="main_service"
+          fi
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "service_name=$SERVICE_NAME" >> $GITHUB_OUTPUT
+          echo "image tag result: $IMAGE_TAG"
+      - name: Short SHA
+        id: shortsha
+        run: |
+          echo "short_sha=${GITHUB_SHA::12}" >> $GITHUB_OUTPUT
+          
+      - name: Setup docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login into ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image to ghcr.io
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: |
+            ghcr.io/sidokaredev/future-interns-backend:${{ steps.determiner.outputs.image_tag }}-${{ steps.shortsha.outputs.short_sha }}
+            ghcr.io/sidokaredev/future-interns-backend:${{ steps.determiner.outputs.image_tag }}-latest
+          platforms: linux/amd64
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha
+
+  pull-and-deploy:
+    runs-on: ubuntu-22.04
+    name: Pulling new image and deploy
+    needs: build-and-push-image
+    steps:
+      - name: SSH into Neolite VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.NEOLITEVPS_HOST }}
+          username: ${{ secrets.NEOLITEVPS_USER }}
+          key: ${{ secrets.NEOLITEVPS_SSH_PRIVATE_KEY }}
+          script: |
+            cd container-configs/
+            docker pull ghcr.io/sidokaredev/future-interns-backend:${{ needs.build-and-push-image.outputs.container_image_tag }}-latest
+            docker compose stop ${{ needs.build-and-push-image.outputs.service_name }}
+            docker compose rm ${{ needs.build-and-push-image.outputs.service_name }}
+            docker compose up -d ${{ needs.build-and-push-image.outputs.service_name }}
+            docker compose ps -q ${{ needs.build-and-push-image.outputs.service_name }}
+            docker compose exec nginx-front_end nginx -s reload
