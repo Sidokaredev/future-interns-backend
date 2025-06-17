@@ -94,18 +94,23 @@ jobs:
       - name: SSH into VirtualBox VM Home Server, Pulling Image and Deploy
         run: |
           ssh -o IdentityFile="~/.ssh/sshkey_virtualbox_vm" \
-              -o StrictHostKeyChecking=no \
-              -o User="sidokaredev" \
-              -o ProxyCommand="cloudflared access ssh --hostname remote-virtualbox.sidokaredev.space" \
-              remote-virtualbox.sidokaredev.space << 'ENDSSH'
-              echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u barjakoub --password-stdin
-              docker pull ghcr.io/sidokaredev/future-interns-backend:${{ needs.build-and-push-image.outputs.container_image_tag }}-latest
-              ls
-              docker compose -f ~/compose-ats.yaml stop ${{ needs.build-and-push-image.outputs.service_name }}
-              docker compose -f ~/compose-ats.yaml rm ${{ needs.build-and-push-image.outputs.service_name }}
-              docker compose -f ~/compose-ats.yaml up -d ${{ needs.build-and-push-image.outputs.service_name }}
-              docker compose -f ~/compose-ats.yaml ps -q ${{ needs.build-and-push-image.outputs.service_name }}
-              docker compose -f ~/compose-proxy.yaml exec nginx-server nginx -s reload
+          -o StrictHostKeyChecking=no \
+          -o User="sidokaredev" \
+          -o ProxyCommand="cloudflared access ssh --hostname remote-virtualbox.sidokaredev.space" \
+          remote-virtualbox.sidokaredev.space << 'ENDSSH'
+          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u barjakoub --password-stdin
+          echo "pulling image"
+          docker pull ghcr.io/sidokaredev/future-interns-backend:${{ needs.build-and-push-image.outputs.container_image_tag }}-latest
+          echo "stopping current service"
+          docker compose -f compose-ats.yaml stop ${{ needs.build-and-push-image.outputs.service_name }}
+          echo "removing current service"
+          docker compose -f compose-ats.yaml rm ${{ needs.build-and-push-image.outputs.service_name }}
+          echo "re-create current service"
+          docker compose -f compose-ats.yaml up -d ${{ needs.build-and-push-image.outputs.service_name }}
+          echo "checking current service"
+          docker compose -f compose-ats.yaml ps -q ${{ needs.build-and-push-image.outputs.service_name }}
+          echo "refreshing nginx server proxy"
+          docker compose -f compose-proxy.yaml exec nginx-server nginx -s reload
           ENDSSH
         
       #- name: SSH into Neolite VPS
