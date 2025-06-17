@@ -13,11 +13,6 @@ jobs:
       container_image_tag: ${{ steps.determiner.outputs.image_tag }}
       service_name: ${{ steps.determiner.outputs.service_name }}
     steps: 
-      #- name: Checkout main-service code
-      #  uses: actions/checkout@v4
-      #  with:
-      #    ref: 'main'
-      
       - name: Determine image and service name by branch trigger
         id: determiner
         run: |
@@ -27,22 +22,22 @@ jobs:
           SERVICE_NAME=""
           if [[ "$BRANCH_TRIGGER" == "cache_aside" ]]; then
             IMAGE_TAG="cache-aside"
-            SERVICE_NAME="cache_aside"
+            SERVICE_NAME="cache-aside-service"
           elif [[ "$BRANCH_TRIGGER" == "read_through" ]]; then
             IMAGE_TAG="read-through"
-            SERVICE_NAME="read_through"
+            SERVICE_NAME="read-through-service"
           elif [[ "$BRANCH_TRIGGER" == "write_through" ]]; then
             IMAGE_TAG="write-through"
-            SERVICE_NAME="write_through"
+            SERVICE_NAME="write-through-service"
           elif [[ "$BRANCH_TRIGGER" == "write_behind" ]]; then
             IMAGE_TAG="write-behind"
-            SERVICE_NAME="write_behind"
+            SERVICE_NAME="write-behind-service"
           elif [[ "$BRANCH_TRIGGER" == "no_cache" ]]; then
             IMAGE_TAG="no-cache"
-            SERVICE_NAME="no_cache"
+            SERVICE_NAME="no-cache-service"
           else
             IMAGE_TAG="$BRANCH_TRIGGER"
-            SERVICE_NAME="main_service"
+            SERVICE_NAME="main-service"
           fi
           echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "service_name=$SERVICE_NAME" >> $GITHUB_OUTPUT
@@ -79,17 +74,48 @@ jobs:
     name: Pulling new image and deploy
     needs: build-and-push-image
     steps:
-      - name: SSH into Neolite VPS
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.NEOLITEVPS_HOST }}
-          username: ${{ secrets.NEOLITEVPS_USER }}
-          key: ${{ secrets.NEOLITEVPS_SSH_PRIVATE_KEY }}
-          script: |
-            cd container-configs/
-            docker pull ghcr.io/sidokaredev/future-interns-backend:${{ needs.build-and-push-image.outputs.container_image_tag }}-latest
-            docker compose stop ${{ needs.build-and-push-image.outputs.service_name }}
-            docker compose rm ${{ needs.build-and-push-image.outputs.service_name }}
-            docker compose up -d ${{ needs.build-and-push-image.outputs.service_name }}
-            docker compose ps -q ${{ needs.build-and-push-image.outputs.service_name }}
-            docker compose exec nginx-front_end nginx -s reload
+      - name: Setting Up Cloudflared Tunnel Proxy
+        run: |
+          sudo apt-get update
+          sudo mkdir -p --mode=0755 /usr/share/keyrings
+          curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
+          sudo apt-get update && sudo apt-get install cloudflared
+
+      - name: Preparing private key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VIRTUALBOX_VM_SSH_PRIVATE_KEY }}" > ~/.ssh/sshkey_virtualbox_vm
+          chmod 600 ~/.ssh/sshkey_virtualbox_vm
+
+      - name: SSH into VirtualBox VM Home Server, Pulling Image and Deploy
+        run: |
+          ssh -o IdentityFile="~/.ssh/sshkey_virtualbox_vm" \
+          -o StrictHostKeyChecking=no \
+          -o User="sidokaredev" \
+          -o ProxyCommand="cloudflared access ssh --hostname remote-virtualbox.sidokaredev.space" \
+          remote-virtualbox.sidokaredev.space << EOF
+          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u barjakoub --password-stdin; \
+          docker pull ghcr.io/sidokaredev/future-interns-backend:${{ needs.build-and-push-image.outputs.container_image_tag }}-latest; \
+          docker compose -f compose-ats.yaml stop ${{ needs.build-and-push-image.outputs.service_name }}; \
+          docker compose -f compose-ats.yaml rm -f ${{ needs.build-and-push-image.outputs.service_name }}; \
+          docker compose -f compose-ats.yaml up -d ${{ needs.build-and-push-image.outputs.service_name }}; \
+          #docker compose -f compose-ats.yaml ps -q ${{ needs.build-and-push-image.outputs.service_name }}
+          docker compose -f compose-proxy.yaml exec nginx-server nginx -s reload
+          EOF
+
+      
+      #- name: SSH into Neolite VPS
+      #  uses: appleboy/ssh-action@v1
+      #  with:
+      #    host: ${{ secrets.NEOLITEVPS_HOST }}
+      #    username: ${{ secrets.NEOLITEVPS_USER }}
+      #    key: ${{ secrets.NEOLITEVPS_SSH_PRIVATE_KEY }}
+      #    script: |
+      #      cd container-configs/
+      #      docker pull ghcr.io/sidokaredev/future-interns-backend:${{ needs.build-and-push-image.outputs.container_image_tag }}-latest
+      #      docker compose stop ${{ needs.build-and-push-image.outputs.service_name }}
+      #      docker compose rm ${{ needs.build-and-push-image.outputs.service_name }}
+      #      docker compose up -d ${{ needs.build-and-push-image.outputs.service_name }}
+      #      docker compose ps -q ${{ needs.build-and-push-image.outputs.service_name }}
+      #      docker compose exec nginx-front_end nginx -s reload
