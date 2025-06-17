@@ -93,6 +93,7 @@ jobs:
       - name: SSH into VirtualBox VM Home Server, Pulling Image and Deploy
         run: |
           ssh -o IdentityFile="~/.ssh/sshkey_virtualbox_vm" \
+              -o StrictHostKeyChecking=no \
               -o User="sidokaredev" \
               -o ProxyCommand="cloudflared access ssh --hostname remote-virtualbox.sidokaredev.space" \
               remote-virtualbox.sidokaredev.space
