@@ -23,22 +23,22 @@ jobs:
 
           if [[ "$BRANCH_TRIGGER" == "cache_aside" ]]; then
             IMAGE_TAG="cache-aside"
-            SERVICE_NAME="cache_aside"
+            SERVICE_NAME="cache-aside-service"
           elif [[ "$BRANCH_TRIGGER" == "read_through" ]]; then
             IMAGE_TAG="read-through"
-            SERVICE_NAME="read_through"
+            SERVICE_NAME="read-through-service"
           elif [[ "$BRANCH_TRIGGER" == "write_through" ]]; then
             IMAGE_TAG="write-through"
-            SERVICE_NAME="write_through"
+            SERVICE_NAME="write-through-serviceh"
           elif [[ "$BRANCH_TRIGGER" == "write_behind" ]]; then
             IMAGE_TAG="write-behind"
-            SERVICE_NAME="write_behind"
+            SERVICE_NAME="write-behind-service"
           elif [[ "$BRANCH_TRIGGER" == "no_cache" ]]; then
             IMAGE_TAG="no-cache"
-            SERVICE_NAME="no_cache"
+            SERVICE_NAME="no-cache-service"
           else
             IMAGE_TAG="$BRANCH_TRIGGER"
-            SERVICE_NAME="main_service"
+            SERVICE_NAME="main-service"
           fi
 
           echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
@@ -98,13 +98,12 @@ jobs:
               -o ProxyCommand="cloudflared access ssh --hostname remote-virtualbox.sidokaredev.space" \
               remote-virtualbox.sidokaredev.space
 
-          cd container-configs/
           docker pull ghcr.io/sidokaredev/future-interns-backend:${{ needs.build-and-push-image.outputs.container_image_tag }}-latest
-          docker compose stop ${{ needs.build-and-push-image.outputs.service_name }}
-          docker compose rm ${{ needs.build-and-push-image.outputs.service_name }}
-          docker compose up -d ${{ needs.build-and-push-image.outputs.service_name }}
-          docker compose ps -q ${{ needs.build-and-push-image.outputs.service_name }}
-          docker compose exec nginx-front_end nginx -s reload
+          docker compose -f compose-ats.yaml stop ${{ needs.build-and-push-image.outputs.service_name }}
+          docker compose -f compose-ats.yaml rm ${{ needs.build-and-push-image.outputs.service_name }}
+          docker compose -f compose-ats.yaml up -d ${{ needs.build-and-push-image.outputs.service_name }}
+          docker compose -f compose-ats.yaml ps -q ${{ needs.build-and-push-image.outputs.service_name }}
+          docker compose -f compose-proxy.yaml exec nginx-server nginx -s reload
         
       #- name: SSH into Neolite VPS
       #  uses: appleboy/ssh-action@v1
