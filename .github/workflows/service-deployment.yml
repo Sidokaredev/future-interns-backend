@@ -98,12 +98,12 @@ jobs:
           -o User="sidokaredev" \
           -o ProxyCommand="cloudflared access ssh --hostname remote-virtualbox.sidokaredev.space" \
           remote-virtualbox.sidokaredev.space << EOF
-          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u barjakoub --password-stdin
-          docker pull ghcr.io/sidokaredev/future-interns-backend:${{ needs.build-and-push-image.outputs.container_image_tag }}-latest
-          docker compose -f compose-ats.yaml stop ${{ needs.build-and-push-image.outputs.service_name }}
-          docker compose -f compose-ats.yaml rm ${{ needs.build-and-push-image.outputs.service_name }}
-          docker compose -f compose-ats.yaml up -d ${{ needs.build-and-push-image.outputs.service_name }}
-          docker compose -f compose-ats.yaml ps -q ${{ needs.build-and-push-image.outputs.service_name }}
+          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u barjakoub --password-stdin; \
+          docker pull ghcr.io/sidokaredev/future-interns-backend:${{ needs.build-and-push-image.outputs.container_image_tag }}-latest; \
+          docker compose -f compose-ats.yaml stop ${{ needs.build-and-push-image.outputs.service_name }}; \
+          docker compose -f compose-ats.yaml rm -f ${{ needs.build-and-push-image.outputs.service_name }}; \
+          docker compose -f compose-ats.yaml up -d ${{ needs.build-and-push-image.outputs.service_name }}; \
+          #docker compose -f compose-ats.yaml ps -q ${{ needs.build-and-push-image.outputs.service_name }}
           docker compose -f compose-proxy.yaml exec nginx-server nginx -s reload
           EOF
         
