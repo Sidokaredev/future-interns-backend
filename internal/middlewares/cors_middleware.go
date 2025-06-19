@@ -14,6 +14,7 @@ func CORSPolicy() gin.HandlerFunc {
 			"http://localhost:5173",
 			"https://sidokaredev.github.io",
 			"https://sidokaredev.space",
+			"https://career.sidokaredev.space",
 			"https://e-career.polije.sidokaredev.space",
 			"http://192.168.144.152",
 		}
