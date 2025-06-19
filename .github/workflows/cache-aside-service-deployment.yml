@@ -1,5 +1,5 @@
-name: Service Deployment
-run-name: Action workflow on ATS services
+name: Cache Aside Service Deployment
+run-name: Action workflow on ATS services@cache-aside
 on:
   push:
 permissions:

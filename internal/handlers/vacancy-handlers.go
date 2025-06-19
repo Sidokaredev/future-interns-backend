@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -443,26 +444,28 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		return
 	}
 
-	indexes := [3]string{
+	indexes := [3]string{ // key of SET
 		fmt.Sprintf("index:%s", lineIndustryQuery),
 		fmt.Sprintf("index:%s", employeeTypeQuery),
 		fmt.Sprintf("index:%s", workArrangement),
 	}
 
 	rdbCtx := context.Background()
-	sizeInterCard, errInterCard := rdb.SInterCard(rdbCtx, 500, indexes[0], indexes[1], indexes[2]).Result()
-	if errInterCard != nil {
+
+	sInter, errSInter := rdb.SInter(rdbCtx, indexes[0], indexes[1], indexes[2]).Result() // members INTERSECTION
+	if errSInter != nil {
 		ctx.Set("CACHE_TYPE", "invalid-cache-aside")
 
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   errInterCard.Error(),
-			"message": "fail counting intersection size",
+			"error":   errSInter.Error(),
+			"message": "fail getting intersection values",
 		})
 		return
 	}
-	if sizeInterCard < 500 {
-		log.Println("reading from database...")
+
+	if len(sInter) == 0 { // length members
+		log.Println("QUERYING to origin database ...")
 		ctx.Set("CACHE_HIT", 0)
 		ctx.Set("CACHE_MISS", 1)
 
@@ -516,8 +519,6 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 			return
 		}
 
-		ctx.Set("CACHE_TYPE", "cache-aside")
-
 		ctx.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"data":    vacancies,
@@ -525,39 +526,135 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		return
 	}
 
-	sInter, errSInter := rdb.SInter(rdbCtx, indexes[0], indexes[1], indexes[2]).Result()
-	if errSInter != nil {
-		ctx.Set("CACHE_TYPE", "invalid-cache-aside")
-
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   errSInter.Error(),
-			"message": "fail getting intersection values",
-		})
-		return
-	}
-
 	vacancies := []VacancyProps{}
+	removedMemberCount := 0
+	unCachedVacancyKeys := []string{}
 	for _, key := range sInter {
 		var vacancy VacancyProps
 
 		cmd := rdb.HGetAll(rdbCtx, key)
-		if errScanHash := cmd.Scan(&vacancy); errScanHash != nil {
-			ctx.Set("CACHE_TYPE", "invalid-cache-aside")
+		if len(cmd.Val()) == 0 { // empty HASH by key
+			for _, index := range indexes { // remove member over SET by key
+				setRemStatus, errSetRem := rdb.SRem(rdbCtx, index, key).Result()
+				if errSetRem != nil {
+					ctx.JSON(http.StatusInternalServerError, gin.H{
+						"success": false,
+						"error":   errSetRem.Error(),
+						"message": fmt.Sprintf("terjadi kegagalan ketika menghapus member[%s] dari set[%s]", key, index),
+					})
+					return
+				}
 
+				if setRemStatus == 1 { // counting removed members and collect uncached vacancy id
+					removedMemberCount += 1
+					unCachedVacancyKeys = append(unCachedVacancyKeys, strings.TrimPrefix(key, "CA:"))
+				}
+			}
+		} else { // scanning HASH value
+			if errScanHash := cmd.Scan(&vacancy); errScanHash != nil {
+				ctx.Set("CACHE_TYPE", "invalid-cache-aside")
+
+				ctx.JSON(http.StatusInternalServerError, gin.H{
+					"success": false,
+					"error":   errScanHash.Error(),
+					"message": "fail scanning hash field-value",
+				})
+				return
+			}
+
+			vacancies = append(vacancies, vacancy) // collect vacancy
+		}
+	}
+
+	log.Printf("uncached in total: %v", removedMemberCount)
+
+	if len(unCachedVacancyKeys) > 0 { // uncached vacancy id more than 0
+		ctx.Set("CACHE_HIT", 0)
+		ctx.Set("CACHE_MISS", 1)
+
+		var unCachedVacancies []VacancyProps
+		sql := `
+		SELECT
+			id,
+			position,
+			description,
+			qualification,
+			responsibility,
+			line_industry,
+			employee_type,
+			min_experience,
+			salary,
+			work_arrangement,
+			sla,
+			is_inactive,
+			employer_id,
+			created_at
+		FROM
+			vacancies
+		WHERE
+			line_industry LIKE ?
+			AND
+			employee_type LIKE ?
+			AND
+			work_arrangement LIKE ?
+			AND
+			id IN ?
+	`
+		unCachedQueryParams := []interface{}{
+			fmt.Sprintf("%%%s%%", lineIndustryQuery),
+			fmt.Sprintf("%%%s%%", employeeTypeQuery),
+			fmt.Sprintf("%%%s%%", workArrangement),
+			unCachedVacancyKeys,
+		}
+		read := gormDB.Raw(sql, unCachedQueryParams...).Scan(&unCachedVacancies)
+		if read.Error != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
-				"error":   errScanHash.Error(),
-				"message": "fail scanning hash field-value",
+				"error":   read.Error.Error(),
+				"message": "query[SELECT] gagal",
 			})
 			return
 		}
 
-		vacancies = append(vacancies, vacancy)
+		pipe := rdb.Pipeline() // set vacancy id as members
+		keysCollection := []string{}
+		for _, uncachedVacancy := range unCachedVacancies { // uncached vacancies from query
+			hfields := []string{}
+
+			props := reflect.TypeOf(uncachedVacancy)
+			for idx := 0; idx < props.NumField(); idx++ {
+				structTag := props.Field(idx).Tag.Get("json")
+				hfields = append(hfields, structTag)
+			}
+
+			key := fmt.Sprintf("CA:%s", uncachedVacancy.ID)
+			pipe.HSet(rdbCtx, key, uncachedVacancy)
+			pipe.HExpire(rdbCtx, key, 30*time.Minute, hfields...)
+
+			keysCollection = append(keysCollection, key)
+		}
+
+		for _, index := range indexes {
+			pipe.SAdd(rdbCtx, index, keysCollection)
+		}
+
+		if _, errExec := pipe.Exec(rdbCtx); errExec != nil {
+			ctx.Set("CACHE_TYPE", "invalid-cache-aside")
+
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": true,
+				"error":   errExec.Error(),
+				"message": "there was an err query from the pipeline",
+			})
+			return
+		}
+
+		vacancies = append(vacancies, unCachedVacancies...) // collect vacancy
+	} else {
+		ctx.Set("CACHE_HIT", 1)
+		ctx.Set("CACHE_MISS", 0)
 	}
 
-	ctx.Set("CACHE_HIT", 1)
-	ctx.Set("CACHE_MISS", 0)
 	ctx.Set("CACHE_TYPE", "cache-aside")
 
 	ctx.JSON(http.StatusOK, gin.H{
