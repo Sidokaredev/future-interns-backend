@@ -69,7 +69,20 @@ func (handler *VacancyHandler) GetVacanciesNoCache(ctx *gin.Context) {
 
 	sqlQuery := `
 		SELECT TOP(500)
-			*
+			id,
+			position,
+			description,
+			qualification,
+			responsibility,
+			line_industry,
+			employee_type,
+			min_experience,
+			salary,
+			work_arrangement,
+			sla,
+			is_inactive,
+			employer_id,
+			created_at
 		FROM
 			vacancies 
 		WHERE

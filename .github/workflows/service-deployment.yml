@@ -29,7 +29,7 @@ jobs:
             SERVICE_NAME="read-through-service"
           elif [[ "$BRANCH_TRIGGER" == "write_through" ]]; then
             IMAGE_TAG="write-through"
-            SERVICE_NAME="write-through-serviceh"
+            SERVICE_NAME="write-through-service"
           elif [[ "$BRANCH_TRIGGER" == "write_behind" ]]; then
             IMAGE_TAG="write-behind"
             SERVICE_NAME="write-behind-service"
