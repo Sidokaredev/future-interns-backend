@@ -317,7 +317,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		}
 
 		pipe := rdb.Pipeline()
-		keysCollection := []string{}
+		keysCollection := []interface{}{}
 		for _, vacancy := range vacancies {
 			hfields := []string{}
 
@@ -335,7 +335,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		}
 
 		for _, index := range indexes {
-			pipe.SAdd(rdbCtx, index, keysCollection)
+			pipe.SAdd(rdbCtx, index, keysCollection...) // interface
 		}
 
 		if _, errExec := pipe.Exec(rdbCtx); errExec != nil {
