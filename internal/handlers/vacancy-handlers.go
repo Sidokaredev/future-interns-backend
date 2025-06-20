@@ -146,177 +146,7 @@ func (handler *VacancyHandler) WriteVacanciesCacheAside(ctx *gin.Context) {
 		"success": true,
 		"data":    vacanciesID,
 	})
-}
-
-func (handler *VacancyHandler) ReadCacheAsideVacancies(ctx *gin.Context) {
-	ctx.Set("CACHE_HIT", 0)
-	ctx.Set("CACHE_MISS", 0)
-
-	lineIndustryQuery, _ := ctx.GetQuery("lineIndustry")
-	employeeTypeQuery, _ := ctx.GetQuery("employeeType")
-	WorkArrangement, _ := ctx.GetQuery("workArrangement")
-
-	rdb, errRdb := initializer.GetRedisDB()
-	if errRdb != nil {
-		ctx.Set("CACHE_TYPE", "cache-aside-INVALID")
-
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   errRdb.Error(),
-			"message": "fail getting Redis instance connection",
-		})
-		return
-	}
-
-	gormDB, errGorm := initializer.GetMssqlDB()
-	if errGorm != nil {
-		ctx.Set("CACHE_TYPE", "cache-aside-INVALID")
-
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   errGorm.Error(),
-			"message": "fail getting GORM instance connection",
-		})
-		return
-	}
-
-	vacancyQueryFunc := func(values ...string) bool {
-		compareValues := []string{
-			lineIndustryQuery,
-			employeeTypeQuery,
-			WorkArrangement,
-		}
-		for idxv, v := range values {
-			if compareValues[idxv] != v {
-				return false
-			}
-		}
-
-		return true
-	}
-
-	vacancies := []VacancyProps{}
-
-	ctxRdb := context.Background()
-	var cursor uint64
-	for {
-		var keys []string
-		var errScan error
-		keys, cursor, errScan = rdb.Scan(ctxRdb, cursor, "CA:*", 50).Result()
-		if errScan != nil {
-			ctx.Set("CACHE_TYPE", "cache-aside-INVALID")
-
-			ctx.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error":   errScan.Error(),
-				"message": "fail scanning matching keys",
-			})
-			return
-		}
-
-		for idxk, key := range keys {
-			var vacancy VacancyProps
-
-			cmd := rdb.HGetAll(ctxRdb, key)
-			if errScan := cmd.Scan(&vacancy); errScan != nil {
-				ctx.Set("CACHE_TYPE", "cache-aside-INVALID")
-
-				ctx.JSON(http.StatusInternalServerError, gin.H{
-					"success": false,
-					"error":   errScan.Error(),
-					"message": fmt.Sprintf("fail scanning field-value at index:%d", idxk),
-				})
-				return
-			}
-
-			if vacancyQueryFunc(
-				vacancy.LineIndustry,
-				vacancy.EmployeeType,
-				vacancy.WorkArrangement,
-			) {
-				vacancies = append(vacancies, vacancy)
-			}
-		}
-
-		if cursor == 0 {
-			break
-		}
-	}
-
-	if len(vacancies) < 500 {
-		ctx.Set("CACHE_HIT", 0)
-		ctx.Set("CACHE_MISS", 1)
-
-		sqlQuery := `
-		SELECT TOP (500)
-			id,
-			position,
-			description,
-			qualification,
-			responsibility,
-			line_industry,
-			employee_type,
-			min_experience,
-			salary,
-			work_arrangement,
-			sla,
-			is_inactive,
-			employer_id,
-			created_at
-		FROM
-			vacancies
-		WHERE
-			line_industry LIKE ?
-			AND
-			employee_type LIKE ?
-			AND
-			work_arrangement LIKE ?
-	`
-
-		vacancies := []map[string]interface{}{}
-		getVacancies := gormDB.Raw(sqlQuery,
-			fmt.Sprintf("%%%s%%", lineIndustryQuery),
-			fmt.Sprintf("%%%s%%", employeeTypeQuery),
-			fmt.Sprintf("%%%s%%", WorkArrangement),
-		).Scan(&vacancies)
-		if getVacancies.Error != nil {
-			ctx.Set("CACHE_TYPE", "cache-aside-INVALID")
-
-			ctx.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error":   getVacancies.Error.Error(),
-				"message": "there was an issue with sql query",
-			})
-			return
-		}
-
-		if getVacancies.RowsAffected == 0 {
-			log.Println("empty vacancies!")
-		} else {
-			errUpdate := UpdateCaches(rdb, vacancies)
-			if errUpdate != nil {
-				log.Println("fail updating cache from database source!")
-			}
-		}
-
-		ctx.Set("CACHE_TYPE", "cache-aside")
-
-		ctx.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"data":    vacancies,
-		})
-		return
-	}
-
-	ctx.Set("CACHE_TYPE", "cache-aside")
-	ctx.Set("CACHE_HIT", 1)
-	ctx.Set("CACHE_MISS", 0)
-
-	ctx.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    vacancies,
-	})
-}
+} // in use
 
 func (handler *VacancyHandler) UpdateVacanciesCacheAside(ctx *gin.Context) {
 	ctx.Set("CACHE_HIT", 0)
@@ -387,7 +217,7 @@ func (handler *VacancyHandler) UpdateVacanciesCacheAside(ctx *gin.Context) {
 		"success": true,
 		"data":    "successfully update all data",
 	})
-}
+} // in use
 
 func UpdateCaches(rdb *redis.Client, vacancies []map[string]interface{}) error {
 	c := context.Background()
@@ -465,7 +295,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 	}
 
 	if len(sInter) == 0 { // length members
-		log.Println("QUERYING to origin database ...")
+		log.Println("EMPTY INTERSECTION ... ...")
 		ctx.Set("CACHE_HIT", 0)
 		ctx.Set("CACHE_MISS", 1)
 
@@ -519,6 +349,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 			return
 		}
 
+		ctx.Set("CACHE_TYPE", "cache-aside")
 		ctx.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"data":    vacancies,
@@ -537,6 +368,8 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 			for _, index := range indexes { // remove member over SET by key
 				setRemStatus, errSetRem := rdb.SRem(rdbCtx, index, key).Result()
 				if errSetRem != nil {
+					ctx.Set("CACHE_TYPE", "invalid-cache-aside")
+
 					ctx.JSON(http.StatusInternalServerError, gin.H{
 						"success": false,
 						"error":   errSetRem.Error(),
@@ -566,7 +399,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		}
 	}
 
-	log.Printf("uncached in total: %v", removedMemberCount)
+	log.Printf("UNCACHED in total: %v", removedMemberCount)
 
 	if len(unCachedVacancyKeys) > 0 { // uncached vacancy id more than 0
 		ctx.Set("CACHE_HIT", 0)
@@ -661,7 +494,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		"success": true,
 		"data":    vacancies,
 	})
-}
+} // in use
 
 func ReadFromDatabase(gormDB *gorm.DB, queryParams ...interface{}) ([]VacancyProps, error) {
 	sql := `
