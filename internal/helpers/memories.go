@@ -80,7 +80,7 @@ func CalcMemUsage() (Memories, error) {
 	}
 
 	memUsageInPercent := (memCurrentValue / memLimitValue) * 100
-	log.Printf("mem limit: %vB | mem usage: %vB | percent: %v", memLimitValue, memCurrentValue, memUsageInPercent)
+	// log.Printf("mem limit: %vB | mem usage: %vB | percent: %v", memLimitValue, memCurrentValue, memUsageInPercent)
 
 	return Memories{
 		Limit:    int64(memLimitValue),

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -260,7 +261,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 			"message": "fail getting Redis instance connection",
 		})
 		return
-	}
+	} // redis conn
 
 	gormDB, errGorm := initializer.GetMssqlDB()
 	if errGorm != nil {
@@ -272,30 +273,49 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 			"message": "fail getting GORM instance connection",
 		})
 		return
-	}
+	} // mssql conn
 
 	indexes := [3]string{ // key of SET
 		fmt.Sprintf("index:%s", lineIndustryQuery),
 		fmt.Sprintf("index:%s", employeeTypeQuery),
 		fmt.Sprintf("index:%s", workArrangement),
 	}
+	indexConcat := fmt.Sprintf("%s,%s,%s", lineIndustryQuery, employeeTypeQuery, workArrangement) // intersection key
 
 	rdbCtx := context.Background()
 
-	sInter, errSInter := rdb.SInter(rdbCtx, indexes[0], indexes[1], indexes[2]).Result() // members INTERSECTION
-	if errSInter != nil {
+	/*
+		sInter, errSInter := rdb.SInter(rdbCtx, indexes[0], indexes[1], indexes[2]).Result() // members INTERSECTION
+		if errSInter != nil {
+			ctx.Set("CACHE_TYPE", "invalid-cache-aside")
+
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   errSInter.Error(),
+				"message": "fail getting intersection values",
+			})
+			return
+		}
+	*/
+	zInter, errZInter := rdb.ZRevRangeByScore(rdbCtx, indexConcat, &redis.ZRangeBy{ // get intersection DESC by unixnano as maximum score
+		Min:    "-inf",
+		Max:    strconv.FormatInt(time.Now().UnixNano(), 10),
+		Offset: 0,
+		Count:  500,
+	}).Result()
+	if errZInter != nil {
 		ctx.Set("CACHE_TYPE", "invalid-cache-aside")
 
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   errSInter.Error(),
-			"message": "fail getting intersection values",
+			"error":   errZInter.Error(),
+			"message": fmt.Sprintf("gagal mendapatkan interseksi | key: %s", indexConcat),
 		})
 		return
 	}
 
-	if len(sInter) == 0 { // length members
-		log.Println("EMPTY INTERSECTION ... ...")
+	if len(zInter) == 0 { // length members
+		log.Printf("EMPTY INTERSECTION KEY: %s", indexConcat)
 		ctx.Set("CACHE_HIT", 0)
 		ctx.Set("CACHE_MISS", 1)
 
@@ -317,7 +337,8 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		}
 
 		pipe := rdb.Pipeline()
-		keysCollection := []interface{}{}
+		// keysCollection := []interface{}{}
+		members := []redis.Z{}
 		for _, vacancy := range vacancies {
 			hfields := []string{}
 
@@ -331,12 +352,27 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 			pipe.HSet(rdbCtx, key, vacancy)
 			pipe.HExpire(rdbCtx, key, 30*time.Minute, hfields...)
 
-			keysCollection = append(keysCollection, key)
+			// keysCollection = append(keysCollection, key)
+			members = append(members, redis.Z{
+				Score:  float64(vacancy.CreatedAt.UnixNano()),
+				Member: key,
+			})
 		}
 
 		for _, index := range indexes {
-			pipe.SAdd(rdbCtx, index, keysCollection...) // interface
+			pipe.ZAddArgs(rdbCtx, index, redis.ZAddArgs{
+				XX:      true,
+				GT:      true,
+				Members: members,
+			})
+			// pipe.SAdd(rdbCtx, index, keysCollection...) // interface
 		}
+
+		pipe.ZInterStore(rdbCtx, indexConcat, &redis.ZStore{
+			Keys:      indexes[:],
+			Aggregate: "MAX",
+		})
+		pipe.Expire(rdbCtx, indexConcat, 30*time.Minute)
 
 		if _, errExec := pipe.Exec(rdbCtx); errExec != nil {
 			ctx.Set("CACHE_TYPE", "invalid-cache-aside")
@@ -358,31 +394,32 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 	}
 
 	vacancies := []VacancyProps{}
-	removedMemberCount := 0
+	// removedMemberCount := 0
 	unCachedVacancyKeys := []string{}
-	for _, key := range sInter {
+	for _, key := range zInter {
 		var vacancy VacancyProps
 
 		cmd := rdb.HGetAll(rdbCtx, key)
 		if len(cmd.Val()) == 0 { // empty HASH by key
-			for _, index := range indexes { // remove member over SET by key
-				setRemStatus, errSetRem := rdb.SRem(rdbCtx, index, key).Result()
-				if errSetRem != nil {
-					ctx.Set("CACHE_TYPE", "invalid-cache-aside")
+			// for _, index := range indexes { // remove member over SET by key
+			// 	setRemStatus, errSetRem := rdb.SRem(rdbCtx, index, key).Result()
+			// 	if errSetRem != nil {
+			// 		ctx.Set("CACHE_TYPE", "invalid-cache-aside")
 
-					ctx.JSON(http.StatusInternalServerError, gin.H{
-						"success": false,
-						"error":   errSetRem.Error(),
-						"message": fmt.Sprintf("terjadi kegagalan ketika menghapus member[%s] dari set[%s]", key, index),
-					})
-					return
-				}
+			// 		ctx.JSON(http.StatusInternalServerError, gin.H{
+			// 			"success": false,
+			// 			"error":   errSetRem.Error(),
+			// 			"message": fmt.Sprintf("terjadi kegagalan ketika menghapus member[%s] dari set[%s]", key, index),
+			// 		})
+			// 		return
+			// 	}
 
-				if setRemStatus == 1 { // counting removed members and collect uncached vacancy id
-					removedMemberCount += 1
-					unCachedVacancyKeys = append(unCachedVacancyKeys, strings.TrimPrefix(key, "CA:"))
-				}
-			}
+			// 	if setRemStatus == 1 { // counting removed members and collect uncached vacancy id
+			// 		removedMemberCount += 1
+			// 		unCachedVacancyKeys = append(unCachedVacancyKeys, strings.TrimPrefix(key, "CA:"))
+			// 	}
+			// }
+			unCachedVacancyKeys = append(unCachedVacancyKeys, strings.TrimPrefix(key, "CA:"))
 		} else { // scanning HASH value
 			if errScanHash := cmd.Scan(&vacancy); errScanHash != nil {
 				ctx.Set("CACHE_TYPE", "invalid-cache-aside")
@@ -399,7 +436,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		}
 	}
 
-	log.Printf("UNCACHED in total: %v", removedMemberCount)
+	log.Printf("UNCACHED IN TOTAL: %v of %v", len(unCachedVacancyKeys), len(zInter))
 
 	if len(unCachedVacancyKeys) > 0 { // uncached vacancy id more than 0
 		ctx.Set("CACHE_HIT", 0)
@@ -450,7 +487,8 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		}
 
 		pipe := rdb.Pipeline() // set vacancy id as members
-		keysCollection := []interface{}{}
+		// keysCollection := []interface{}{}
+		members := []redis.Z{}
 		for _, uncachedVacancy := range unCachedVacancies { // uncached vacancies from query
 			hfields := []string{}
 
@@ -464,12 +502,27 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 			pipe.HSet(rdbCtx, key, uncachedVacancy)
 			pipe.HExpire(rdbCtx, key, 30*time.Minute, hfields...)
 
-			keysCollection = append(keysCollection, key)
+			// keysCollection = append(keysCollection, key)
+			members = append(members, redis.Z{
+				Score:  float64(uncachedVacancy.CreatedAt.UnixNano()),
+				Member: key,
+			})
 		}
 
 		for _, index := range indexes {
-			pipe.SAdd(rdbCtx, index, keysCollection...) // interface members
+			pipe.ZAddArgs(rdbCtx, index, redis.ZAddArgs{
+				XX:      true,
+				GT:      true,
+				Members: members,
+			})
+			// pipe.SAdd(rdbCtx, index, keysCollection...) // interface members
 		}
+
+		pipe.ZInterStore(rdbCtx, indexConcat, &redis.ZStore{
+			Keys:      indexes[:],
+			Aggregate: "MAX",
+		})
+		pipe.Expire(rdbCtx, indexConcat, 30*time.Minute)
 
 		if _, errExec := pipe.Exec(rdbCtx); errExec != nil {
 			ctx.Set("CACHE_TYPE", "invalid-cache-aside")

@@ -170,7 +170,7 @@ func CalcCPUTimeUsage(elapsedTime time.Duration, elapsedCpuTime float64) (CPUs, 
 	} else {
 		totalCpuTimeInPercent = (elapsedCpuTime / maxCpuTime) * 100
 	}
-	log.Printf("time: %vms | cpu time usage: %.2f | cpu quota ms: %.2f | cpu period ms: %.2f | max cpu ms: %.2f | percent: %v", elapsedTime.Milliseconds(), elapsedCpuTime, cpuQuotaInMs, cpuPeriodInMs, maxCpuTime, ((totalCpuTimeInPercent * 100) / 100))
+	// log.Printf("time: %vms | cpu time usage: %.2f | cpu quota ms: %.2f | cpu period ms: %.2f | max cpu ms: %.2f | percent: %v", elapsedTime.Milliseconds(), elapsedCpuTime, cpuQuotaInMs, cpuPeriodInMs, maxCpuTime, ((totalCpuTimeInPercent * 100) / 100))
 
 	return CPUs{
 		Period:       int(cpuPeriodInMs),
