@@ -54,7 +54,7 @@ func GetMemoryUsage() (Memories, error) {
 		Usage:    int64(memUsageValue),
 		Percent:  (float64(memUsageValue) / float64(memLimitValue)) * 100,
 	}, nil
-}
+} // cgroup v1
 
 func CalcMemUsage() (Memories, error) {
 	memLimit, errMemLimit := os.ReadFile("/sys/fs/cgroup/memory.max")
@@ -80,7 +80,7 @@ func CalcMemUsage() (Memories, error) {
 	}
 
 	memUsageInPercent := (memCurrentValue / memLimitValue) * 100
-	log.Printf("mem limit: %vB | mem usage: %vB | percent: %v", memLimitValue, memCurrentValue, memUsageInPercent)
+	// log.Printf("mem limit: %vB | mem usage: %vB | percent: %v", memLimitValue, memCurrentValue, memUsageInPercent)
 
 	return Memories{
 		Limit:    int64(memLimitValue),
@@ -88,4 +88,4 @@ func CalcMemUsage() (Memories, error) {
 		Usage:    int64(memCurrentValue),
 		Percent:  memUsageInPercent,
 	}, nil
-}
+} // cgroup v2

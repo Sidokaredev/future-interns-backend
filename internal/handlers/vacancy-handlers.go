@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -148,7 +150,7 @@ func (handler *VacancyHandler) WriteVacanciesReadThrough(ctx *gin.Context) {
 		"success": true,
 		"data":    vacanciesID,
 	})
-}
+} // in use
 
 func (handler *VacancyHandler) GetVacanciesReadThrough(ctx *gin.Context) {
 	ctx.Set("CACHE_TYPE", "read-through")
@@ -546,7 +548,7 @@ func (handler *VacancyHandler) UpdateVacanciesReadThrough(ctx *gin.Context) {
 		"success": true,
 		"data":    "successfully update all data",
 	})
-}
+} // in use
 
 func UpdateCaches(rdb *redis.Client, vacancies []map[string]interface{}) error {
 	c := context.Background()
@@ -580,7 +582,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 	employeeTypeQuery, _ := ctx.GetQuery("employeeType")
 	workArrangement, _ := ctx.GetQuery("workArrangement")
 
-	rdb, errRdb := initializer.GetRedisDB()
+	rdb, errRdb := initializer.GetRedisDB() // redis conn
 	if errRdb != nil {
 		ctx.Set("CACHE_TYPE", "invalid-read-through")
 
@@ -592,7 +594,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 		return
 	}
 
-	gormDB, errGorm := initializer.GetMssqlDB()
+	gormDB, errGorm := initializer.GetMssqlDB() // mssql conn
 	if errGorm != nil {
 		ctx.Set("CACHE_TYPE", "invalid-read-through")
 
@@ -604,30 +606,34 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 		return
 	}
 
-	indexes := [3]string{
+	indexes := [3]string{ // wilcard mssql query
 		fmt.Sprintf("index:%s", lineIndustryQuery),
 		fmt.Sprintf("index:%s", employeeTypeQuery),
 		fmt.Sprintf("index:%s", workArrangement),
 	}
+	indexConcat := fmt.Sprintf("%s,%s,%s", lineIndustryQuery, employeeTypeQuery, workArrangement) // intersection key
 
 	rdbCtx := context.Background()
-	log.Printf("FINDING INDEX \t: %s | %s | %s", indexes[0], indexes[1], indexes[2])
 
-	sizeInterCard, errInterCard := rdb.SInterCard(rdbCtx, 500, indexes[0], indexes[1], indexes[2]).Result()
-	if errInterCard != nil {
+	zInter, errZInter := rdb.ZRevRangeByScore(rdbCtx, indexConcat, &redis.ZRangeBy{ // get intersection members DESC
+		Min:    "-inf",
+		Max:    strconv.FormatInt(time.Now().UnixNano(), 10),
+		Offset: 0,
+		Count:  500,
+	}).Result()
+	if errZInter != nil {
 		ctx.Set("CACHE_TYPE", "invalid-read-through")
 
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   errInterCard.Error(),
-			"message": "fail counting intersection size",
+			"error":   errZInter.Error(),
+			"message": fmt.Sprintf("gagal mendapatkan interseksi | key: %s", indexConcat),
 		})
 		return
 	}
-	if sizeInterCard < 500 {
-		log.Println("reading from database...")
-		ctx.Set("CACHE_HIT", 0)
-		ctx.Set("CACHE_MISS", 1)
+
+	if len(zInter) == 0 { // if empty intersection
+		log.Printf("EMPTY INTERSECTION KEY: %s", indexConcat)
 
 		queryParams := []interface{}{
 			fmt.Sprintf("%%%s%%", lineIndustryQuery),
@@ -647,33 +653,38 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 		}
 
 		pipe := rdb.Pipeline()
-		keysCollection := []string{}
-		for _, vacancy := range vacancies {
+		members := []redis.Z{}
+		for _, vacancy := range vacancies { // get Hash by key
 			hfields := []string{}
-			hfieldValues := []interface{}{}
 
-			values := reflect.ValueOf(vacancy)
 			props := reflect.TypeOf(vacancy)
-
 			for i := 0; i < props.NumField(); i++ {
 				structTag := props.Field(i).Tag.Get("json")
 				hfields = append(hfields, structTag)
-
-				value := values.Field(i)
-				hfieldValues = append(hfieldValues, structTag, value.Interface())
 			}
 
 			key := fmt.Sprintf("RT:%s", vacancy.ID)
-			// pipe.HSet(rdbCtx, key, vacancy)
-			pipe.HSet(rdbCtx, key, hfieldValues)
+			pipe.HSet(rdbCtx, key, vacancy)
 			pipe.HExpire(rdbCtx, key, 30*time.Minute, hfields...)
 
-			keysCollection = append(keysCollection, key)
+			members = append(members, redis.Z{
+				Score:  float64(vacancy.CreatedAt.UnixNano()),
+				Member: key,
+			})
 		}
 
-		for _, index := range indexes {
-			pipe.SAdd(rdbCtx, index, keysCollection)
+		for _, index := range indexes { // add sorted-set members
+			pipe.ZAddArgs(rdbCtx, index, redis.ZAddArgs{
+				GT:      true,
+				Members: members,
+			})
 		}
+
+		pipe.ZInterStore(rdbCtx, indexConcat, &redis.ZStore{ // store intersection members
+			Keys:      indexes[:],
+			Aggregate: "MAX",
+		})
+		pipe.Expire(rdbCtx, indexConcat, 30*time.Minute)
 
 		if _, errExec := pipe.Exec(rdbCtx); errExec != nil {
 			ctx.Set("CACHE_TYPE", "invalid-read-through")
@@ -685,39 +696,204 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 			})
 			return
 		}
-	}
 
-	sInter, errSInter := rdb.SInter(rdbCtx, indexes[0], indexes[1], indexes[2]).Result()
-	if errSInter != nil {
-		ctx.Set("CACHE_TYPE", "invalid-read-through")
+		zInter, errZInter := rdb.ZRevRangeByScore(rdbCtx, indexConcat, &redis.ZRangeBy{ // get intersection members DESC
+			Min:    "-inf",
+			Max:    strconv.FormatInt(time.Now().UnixNano(), 10),
+			Offset: 0,
+			Count:  500,
+		}).Result()
+		if errZInter != nil {
+			ctx.Set("CACHE_TYPE", "invalid-read-through")
 
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   errSInter.Error(),
-			"message": "fail getting intersection values",
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   errZInter.Error(),
+				"message": fmt.Sprintf("gagal mendapatkan interseksi | key: %s", indexConcat),
+			})
+			return
+		}
+
+		cachedVacancies := []VacancyProps{}
+		for _, key := range zInter { // get Hash by key
+			var vacancy VacancyProps
+
+			cmdHash := rdb.HGetAll(rdbCtx, key)
+			if errScanHash := cmdHash.Scan(&vacancy); errScanHash != nil { // scan Hash into struct
+				ctx.Set("CACHE_TYPE", "invalid-cache-type")
+
+				ctx.JSON(http.StatusInternalServerError, gin.H{
+					"success": false,
+					"error":   errScanHash.Error(),
+					"message": "gagal melakukan scan ke struct VacancyProps",
+				})
+				return
+			}
+
+			cachedVacancies = append(cachedVacancies, vacancy)
+		}
+
+		ctx.Set("CACHE_HIT", 0)
+		ctx.Set("CACHE_MISS", 1)
+		ctx.Set("CACHE_TYPE", "read-through")
+
+		ctx.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data":    cachedVacancies,
 		})
 		return
 	}
 
 	vacancies := []VacancyProps{}
-	for _, key := range sInter {
+	uncachedVacancyKeys := []string{}
+	for _, key := range zInter { // get Hash by key
 		var vacancy VacancyProps
 
-		cmd := rdb.HGetAll(rdbCtx, key)
-		if errScanHash := cmd.Scan(&vacancy); errScanHash != nil {
-			ctx.Set("CACHE_TYPE", "invalid-read-through")
+		cmdHash := rdb.HGetAll(rdbCtx, key)
+		if len(cmdHash.Val()) == 0 { // if Hash doesn't exist
+			uncachedVacancyKeys = append(uncachedVacancyKeys, strings.TrimPrefix(key, "RT:"))
+		} else {
+			if errScanHash := cmdHash.Scan(&vacancy); errScanHash != nil { // scan Hash into struct
+				ctx.Set("CACHE_TYPE", "invalid-cache-type")
 
+				ctx.JSON(http.StatusInternalServerError, gin.H{
+					"success": false,
+					"error":   errScanHash.Error(),
+					"message": "gagal melakukan scan ke struct VacancyProps",
+				})
+				return
+			}
+
+			vacancies = append(vacancies, vacancy) // collect data
+		}
+	}
+
+	log.Printf("UNCACHED IN TOTAL: %v of %v", len(uncachedVacancyKeys), len(zInter))
+
+	if len(uncachedVacancyKeys) > 0 { // keys of Hash doesn't exist
+		log.Println("PARTIALLY UNCACHED ... ...")
+		var uncachedVacancies []VacancyProps
+		sql := `
+			SELECT
+				id,
+				position,
+				description,
+				qualification,
+				responsibility,
+				line_industry,
+				employee_type,
+				min_experience,
+				salary,
+				work_arrangement,
+				sla,
+				is_inactive,
+				employer_id,
+				created_at
+			FROM
+				vacancies
+			WHERE
+				line_industry LIKE ?
+				AND
+				employee_type LIKE ?
+				AND
+				work_arrangement LIKE ?
+				AND
+				id IN ?
+		`
+		unCachedQueryParams := []interface{}{
+			fmt.Sprintf("%%%s%%", lineIndustryQuery),
+			fmt.Sprintf("%%%s%%", employeeTypeQuery),
+			fmt.Sprintf("%%%s%%", workArrangement),
+			uncachedVacancyKeys,
+		}
+		read := gormDB.Raw(sql, unCachedQueryParams...).Scan(&uncachedVacancies)
+		if read.Error != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
-				"error":   errScanHash.Error(),
-				"message": "fail scanning hash field-value",
+				"error":   read.Error.Error(),
+				"message": "query[SELECT] gagal",
 			})
 			return
 		}
 
-		vacancies = append(vacancies, vacancy)
+		pipe := rdb.Pipeline()
+		members := []redis.Z{}
+		for _, uncachedVacancy := range uncachedVacancies { // store uncached-vacancies
+			hfields := []string{}
+
+			props := reflect.TypeOf(uncachedVacancy)
+			for idx := 0; idx < props.NumField(); idx++ {
+				structTag := props.Field(idx).Tag.Get("json")
+				hfields = append(hfields, structTag)
+			}
+
+			key := fmt.Sprintf("RT:%s", uncachedVacancy.ID)
+			pipe.HSet(rdbCtx, key, uncachedVacancy)
+			pipe.HExpire(rdbCtx, key, 30*time.Minute, hfields...)
+
+			members = append(members, redis.Z{
+				Score:  float64(uncachedVacancy.CreatedAt.UnixNano()),
+				Member: key,
+			})
+		}
+
+		for _, index := range indexes { // store sorted-set members
+			pipe.ZAddArgs(rdbCtx, index, redis.ZAddArgs{
+				GT:      true,
+				Members: members,
+			})
+		}
+
+		pipe.ZInterStore(rdbCtx, indexConcat, &redis.ZStore{ // store intersection members
+			Keys:      indexes[:],
+			Aggregate: "MAX",
+		})
+		pipe.Expire(rdbCtx, indexConcat, 30*time.Minute)
+
+		if _, errExec := pipe.Exec(rdbCtx); errExec != nil {
+			ctx.Set("CACHE_TYPE", "invalid-cache-aside")
+
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": true,
+				"error":   errExec.Error(),
+				"message": "there was an err query from the pipeline",
+			})
+			return
+		}
+
+		cachedVacancies := []VacancyProps{}
+		for _, key := range uncachedVacancyKeys { // get Hash by key
+			var vacancy VacancyProps
+
+			cmdHash := rdb.HGetAll(rdbCtx, fmt.Sprintf("RT:%s", key))
+			if errScanHash := cmdHash.Scan(&vacancy); errScanHash != nil { // scan Hash into struct
+				ctx.Set("CACHE_TYPE", "invalid-cache-type")
+
+				ctx.JSON(http.StatusInternalServerError, gin.H{
+					"success": false,
+					"error":   errScanHash.Error(),
+					"message": "gagal melakukan scan ke struct VacancyProps",
+				})
+				return
+			}
+
+			cachedVacancies = append(cachedVacancies, vacancy)
+		}
+
+		vacancies = append(vacancies, cachedVacancies...) // collect vacancy
+
+		ctx.Set("CACHE_HIT", 0)
+		ctx.Set("CACHE_MISS", 1)
+		ctx.Set("CACHE_TYPE", "read-through")
+
+		ctx.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data":    vacancies,
+		})
+		return
 	}
 
+	log.Println("ALL CACHED ... ...")
 	ctx.Set("CACHE_HIT", 1)
 	ctx.Set("CACHE_MISS", 0)
 	ctx.Set("CACHE_TYPE", "read-through")
@@ -726,7 +902,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 		"success": true,
 		"data":    vacancies,
 	})
-}
+} // in use
 
 func ReadFromDatabase(gormDB *gorm.DB, queryParams ...interface{}) ([]VacancyProps, error) {
 	sql := `
@@ -762,4 +938,4 @@ func ReadFromDatabase(gormDB *gorm.DB, queryParams ...interface{}) ([]VacancyPro
 	}
 
 	return vacancies, nil
-}
+} // in use
