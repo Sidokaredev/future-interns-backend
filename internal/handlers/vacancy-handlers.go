@@ -720,7 +720,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 
 			cmdHash := rdb.HGetAll(rdbCtx, key)
 			if errScanHash := cmdHash.Scan(&vacancy); errScanHash != nil { // scan Hash into struct
-				ctx.Set("CACHE_TYPE", "invalid-cache-type")
+				ctx.Set("CACHE_TYPE", "invalid-read-through")
 
 				ctx.JSON(http.StatusInternalServerError, gin.H{
 					"success": false,
@@ -754,7 +754,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 			uncachedVacancyKeys = append(uncachedVacancyKeys, strings.TrimPrefix(key, "RT:"))
 		} else {
 			if errScanHash := cmdHash.Scan(&vacancy); errScanHash != nil { // scan Hash into struct
-				ctx.Set("CACHE_TYPE", "invalid-cache-type")
+				ctx.Set("CACHE_TYPE", "invalid-read-through")
 
 				ctx.JSON(http.StatusInternalServerError, gin.H{
 					"success": false,
@@ -808,6 +808,8 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 		}
 		read := gormDB.Raw(sql, unCachedQueryParams...).Scan(&uncachedVacancies)
 		if read.Error != nil {
+			ctx.Set("CACHE_TYPE", "invalid-read-through")
+
 			ctx.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
 				"error":   read.Error.Error(),
@@ -851,7 +853,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 		pipe.Expire(rdbCtx, indexConcat, 30*time.Minute)
 
 		if _, errExec := pipe.Exec(rdbCtx); errExec != nil {
-			ctx.Set("CACHE_TYPE", "invalid-cache-aside")
+			ctx.Set("CACHE_TYPE", "invalid-read-through")
 
 			ctx.JSON(http.StatusInternalServerError, gin.H{
 				"success": true,
@@ -867,7 +869,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 
 			cmdHash := rdb.HGetAll(rdbCtx, fmt.Sprintf("RT:%s", key))
 			if errScanHash := cmdHash.Scan(&vacancy); errScanHash != nil { // scan Hash into struct
-				ctx.Set("CACHE_TYPE", "invalid-cache-type")
+				ctx.Set("CACHE_TYPE", "invalid-read-through")
 
 				ctx.JSON(http.StatusInternalServerError, gin.H{
 					"success": false,
