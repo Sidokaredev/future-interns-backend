@@ -714,11 +714,15 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 			return
 		}
 
+		uncachedCount := 0
 		cachedVacancies := []VacancyProps{}
 		for _, key := range zInter { // get Hash by key
 			var vacancy VacancyProps
 
 			cmdHash := rdb.HGetAll(rdbCtx, key)
+			if len(cmdHash.Val()) == 0 {
+				uncachedCount += 1
+			}
 			if errScanHash := cmdHash.Scan(&vacancy); errScanHash != nil { // scan Hash into struct
 				ctx.Set("CACHE_TYPE", "invalid-read-through")
 
@@ -732,9 +736,10 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 
 			cachedVacancies = append(cachedVacancies, vacancy)
 		}
+		log.Printf("ZINTER - UNCACHED IN TOTAL: %v", uncachedCount)
 
-		ctx.Set("CACHE_HIT", 0)
-		ctx.Set("CACHE_MISS", 1)
+		ctx.Set("CACHE_HIT", 1)
+		ctx.Set("CACHE_MISS", 0)
 		ctx.Set("CACHE_TYPE", "read-through")
 
 		ctx.JSON(http.StatusOK, gin.H{

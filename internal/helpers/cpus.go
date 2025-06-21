@@ -103,7 +103,6 @@ func GetCPUStatUsage() (float64, error) {
 		if line == "" {
 			continue
 		}
-		log.Printf("line : %s", line)
 
 		parts := strings.Fields(line)
 		if len(parts) != 2 {
