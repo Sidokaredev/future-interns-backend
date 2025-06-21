@@ -633,7 +633,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 	}
 
 	if len(zInter) == 0 { // if empty intersection
-		log.Printf("EMPTY INTERSECTION KEY: %s", indexConcat)
+		// log.Printf("EMPTY INTERSECTION KEY: %s", indexConcat)
 
 		queryParams := []interface{}{
 			fmt.Sprintf("%%%s%%", lineIndustryQuery),
@@ -736,7 +736,7 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 
 			cachedVacancies = append(cachedVacancies, vacancy)
 		}
-		log.Printf("ZINTER - UNCACHED IN TOTAL: %v", uncachedCount)
+		// log.Printf("ZINTER - UNCACHED IN TOTAL: %v", uncachedCount)
 
 		ctx.Set("CACHE_HIT", 1)
 		ctx.Set("CACHE_MISS", 0)
@@ -900,7 +900,6 @@ func (handler *VacancyHandler) ReadThroughService(ctx *gin.Context) {
 		return
 	}
 
-	log.Println("ALL CACHED ... ...")
 	ctx.Set("CACHE_HIT", 1)
 	ctx.Set("CACHE_MISS", 0)
 	ctx.Set("CACHE_TYPE", "read-through")
