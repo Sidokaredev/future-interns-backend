@@ -450,7 +450,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		}
 
 		pipe := rdb.Pipeline() // set vacancy id as members
-		keysCollection := []string{}
+		keysCollection := []interface{}{}
 		for _, uncachedVacancy := range unCachedVacancies { // uncached vacancies from query
 			hfields := []string{}
 
@@ -468,7 +468,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		}
 
 		for _, index := range indexes {
-			pipe.SAdd(rdbCtx, index, keysCollection)
+			pipe.SAdd(rdbCtx, index, keysCollection...) // interface members
 		}
 
 		if _, errExec := pipe.Exec(rdbCtx); errExec != nil {
