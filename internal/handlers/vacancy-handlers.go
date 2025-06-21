@@ -361,7 +361,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 
 		for _, index := range indexes {
 			pipe.ZAddArgs(rdbCtx, index, redis.ZAddArgs{
-				XX:      true,
+				// XX:      true, only add if already exist
 				GT:      true,
 				Members: members,
 			})
@@ -371,10 +371,11 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 		pipe.ZInterStore(rdbCtx, indexConcat, &redis.ZStore{
 			Keys:      indexes[:],
 			Aggregate: "MAX",
-		})
-		pipe.Expire(rdbCtx, indexConcat, 30*time.Minute)
+		}).Result()
+		pipe.Expire(rdbCtx, indexConcat, 30*time.Minute).Result()
 
-		if _, errExec := pipe.Exec(rdbCtx); errExec != nil {
+		_, errExec := pipe.Exec(rdbCtx)
+		if errExec != nil {
 			ctx.Set("CACHE_TYPE", "invalid-cache-aside")
 
 			ctx.JSON(http.StatusInternalServerError, gin.H{
@@ -511,7 +512,7 @@ func (handler *VacancyHandler) ReadCacheAsideService(ctx *gin.Context) {
 
 		for _, index := range indexes {
 			pipe.ZAddArgs(rdbCtx, index, redis.ZAddArgs{
-				XX:      true,
+				// XX:      true, only add if already exist
 				GT:      true,
 				Members: members,
 			})
