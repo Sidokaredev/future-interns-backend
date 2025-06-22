@@ -6,6 +6,7 @@ import (
 	"go-write-behind-service/internal/models"
 	"log"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,10 +69,12 @@ func StartUpdaterJob(every time.Duration) {
 		log.Println("job:updater executed!")
 	}
 }
+
 func DataWriter(rdb *redis.Client, gormDB *gorm.DB) error {
 	ctxRdb := context.Background()
-	elements, errWriter := rdb.RPopCount(ctxRdb, "job:writer", 25000).Result()
+	elements, errWriter := rdb.RPopCount(ctxRdb, "job:writer", 20).Result() // default to 25000
 	if errWriter != nil {
+		log.Printf("Writer Err: %s", errWriter.Error())
 		log.Println("no job:writer are waiting...")
 		return nil
 	}
@@ -83,41 +86,53 @@ func DataWriter(rdb *redis.Client, gormDB *gorm.DB) error {
 	m_vacancies := []models.Vacancy{}
 
 	ttl := 30 * time.Minute
-	for _, key := range elements {
-		var vacancy WriteVacancyProps
-		cmd := rdb.HGetAll(ctxRdb, key)
-		if errScanH := cmd.Scan(&vacancy); errScanH != nil {
-			return errScanH
+	pipe := rdb.Pipeline()
+	for _, intersectionKey := range elements { // intersection key
+		intersecMembers, errIntersec := rdb.ZRevRangeByScore(ctxRdb, intersectionKey, &redis.ZRangeBy{ // get members by intersection key DESC
+			Min:    "-inf",
+			Max:    strconv.FormatInt(time.Now().UnixNano(), 10),
+			Offset: 0,
+			Count:  500,
+		}).Result()
+		if errIntersec != nil {
+			return errIntersec
 		}
 
-		m_vacancies = append(m_vacancies, models.Vacancy{
-			Id:              vacancy.ID,
-			Position:        vacancy.Position,
-			Description:     vacancy.Description,
-			Qualification:   vacancy.Qualification,
-			Responsibility:  vacancy.Responsibility,
-			LineIndustry:    vacancy.LineIndustry,
-			EmployeeType:    vacancy.EmployeeType,
-			MinExperience:   vacancy.MinExperience,
-			Salary:          vacancy.Salary,
-			WorkArrangement: vacancy.WorkArrangement,
-			SLA:             vacancy.SLA,
-			IsInactive:      vacancy.IsInactive != 0,
-			EmployerId:      vacancy.EmployerID,
-			CreatedAt:       vacancy.CreatedAt,
-		})
+		for _, HKey := range intersecMembers { // intersection members
+			var vacancy WriteVacancyProps
+			cmd := rdb.HGetAll(ctxRdb, HKey) // Hash field-value
+			if errScanH := cmd.Scan(&vacancy); errScanH != nil {
+				return errScanH
+			}
 
-		props := reflect.TypeOf(vacancy)
-		hfields := []string{}
-		for idx := 0; idx < props.NumField(); idx++ {
-			structTag := props.Field(idx).Tag.Get("json")
-			hfields = append(hfields, structTag)
+			m_vacancies = append(m_vacancies, models.Vacancy{ // collect Hash data
+				Id:              vacancy.ID,
+				Position:        vacancy.Position,
+				Description:     vacancy.Description,
+				Qualification:   vacancy.Qualification,
+				Responsibility:  vacancy.Responsibility,
+				LineIndustry:    vacancy.LineIndustry,
+				EmployeeType:    vacancy.EmployeeType,
+				MinExperience:   vacancy.MinExperience,
+				Salary:          vacancy.Salary,
+				WorkArrangement: vacancy.WorkArrangement,
+				SLA:             vacancy.SLA,
+				IsInactive:      vacancy.IsInactive != 0,
+				EmployerId:      vacancy.EmployerID,
+				CreatedAt:       vacancy.CreatedAt,
+			})
+
+			props := reflect.TypeOf(vacancy)
+			hfields := []string{}
+			for idx := 0; idx < props.NumField(); idx++ { // get Hash fields
+				structTag := props.Field(idx).Tag.Get("json")
+				hfields = append(hfields, structTag)
+			}
+
+			pipe.HExpire(ctxRdb, HKey, ttl, hfields...).Result() // set Hash fields TTL using pipe
 		}
 
-		_, errExp := rdb.HExpire(ctxRdb, key, ttl, hfields...).Result()
-		if errExp != nil {
-			return errExp
-		}
+		pipe.Expire(ctxRdb, intersectionKey, ttl) // set ZIntersection TTL using pipe
 	}
 
 	store := gormDB.CreateInBatches(&m_vacancies, 100)
@@ -128,13 +143,18 @@ func DataWriter(rdb *redis.Client, gormDB *gorm.DB) error {
 		log.Println("data writer: empty stored")
 	}
 
+	if _, errExec := pipe.Exec(ctxRdb); errExec != nil {
+		return errExec
+	}
+
 	return nil
 }
 
 func DataUpdater(rdb *redis.Client, gormDB *gorm.DB) error {
 	ctxRdb := context.Background()
-	elements, errUpdater := rdb.RPopCount(ctxRdb, "job:updater", 25000).Result()
+	elements, errUpdater := rdb.RPopCount(ctxRdb, "job:updater", 20).Result()
 	if errUpdater != nil {
+		log.Printf("Updater Err: %v", errUpdater.Error())
 		log.Println("no job:updater are waiting...")
 		return nil
 	}
@@ -143,67 +163,78 @@ func DataUpdater(rdb *redis.Client, gormDB *gorm.DB) error {
 		return nil
 	}
 
-	for idx, key := range elements {
-		hfields, errHfields := rdb.HKeys(ctxRdb, key).Result()
-		if errHfields != nil {
-			return errHfields
+	for _, intersectionKey := range elements {
+		intersecMembers, errIntersec := rdb.ZRevRangeByScore(ctxRdb, intersectionKey, &redis.ZRangeBy{ // get members by intersection key DESC
+			Min:    "-inf",
+			Max:    strconv.FormatInt(time.Now().UnixNano(), 10),
+			Offset: 0,
+			Count:  500,
+		}).Result()
+		if errIntersec != nil {
+			return errIntersec
 		}
-		// get fields of keys
 
-		fieldsTTL, errTTL := rdb.HTTL(ctxRdb, key, hfields...).Result()
-		if errTTL != nil {
-			return errTTL
-		}
-		// get ttl of each fields
+		for IHash, HKey := range intersecMembers {
+			hfields, errHfields := rdb.HKeys(ctxRdb, HKey).Result() // get Hash fields (name)
+			if errHfields != nil {
+				return errHfields
+			}
 
-		fieldHasNoTTL := 0
-		fieldsToUpdate := []string{}
-		for idx, seconds := range fieldsTTL {
-			if seconds == -1 {
-				fieldHasNoTTL += 1
-				fieldsToUpdate = append(fieldsToUpdate, hfields[idx])
+			fieldsTTL, errTTL := rdb.HTTL(ctxRdb, HKey, hfields...).Result() // get Hash fields TTL
+			if errTTL != nil {
+				return errTTL
+			}
+
+			fieldHasNoTTL := 0
+			fieldsToUpdate := []string{}
+			for idx, seconds := range fieldsTTL { // check number of TTL
+				if seconds == -1 {
+					fieldHasNoTTL += 1
+					fieldsToUpdate = append(fieldsToUpdate, hfields[idx])
+
+					continue
+				}
+			}
+
+			if fieldHasNoTTL > 0 && fieldHasNoTTL < len(hfields) {
+				hvalues, errhv := rdb.HMGet(ctxRdb, HKey, fieldsToUpdate...).Result() // get Hash values of fields with no TTL
+				if errhv != nil {
+					return errhv
+				}
+
+				mappedColumns := map[string]interface{}{}
+				for idx, value := range hvalues {
+					mappedColumns[fieldsToUpdate[idx]] = value
+				}
+
+				if IHash == 0 {
+					log.Printf("hash keys: %v", hfields)
+					log.Printf("ttl fields: %v", fieldsTTL)
+					log.Printf("field being updated: %v", fieldsToUpdate)
+					log.Printf("value being updated: %v", mappedColumns)
+				}
+
+				ID := strings.TrimPrefix(HKey, "WB:")
+				update := gormDB.Model(&models.Vacancy{Id: ID}).Updates(mappedColumns)
+				if update.Error != nil {
+					return update.Error
+				}
+
+				if IHash == 0 {
+					log.Printf("updated status: %v", update.RowsAffected)
+				}
+
+				// _, errhexp := rdb.HExpire(ctxRdb, HKey, 30*time.Minute, fieldsToUpdate...).Result()
+				/*
+					logically if there any data updated, all Hash fields should re-assign TTL
+				*/
+				_, errhexp := rdb.HExpire(ctxRdb, HKey, 30*time.Minute, hfields...).Result()
+				if errhexp != nil {
+					return errhexp
+				}
 
 				continue
 			}
-		}
-
-		if fieldHasNoTTL > 0 && fieldHasNoTTL < len(hfields) {
-			hvalues, errhv := rdb.HMGet(ctxRdb, key, fieldsToUpdate...).Result()
-			if errhv != nil {
-				return errhv
-			}
-
-			mappedColumns := map[string]interface{}{}
-			for idx, value := range hvalues {
-				mappedColumns[fieldsToUpdate[idx]] = value
-			}
-
-			if idx == 0 {
-				log.Printf("hash keys: %v", hfields)
-				log.Printf("ttl fields: %v", fieldsTTL)
-				log.Printf("field being updated: %v", fieldsToUpdate)
-				log.Printf("value beign updated: %v", mappedColumns)
-			}
-
-			ID := strings.TrimPrefix(key, "WB:")
-			update := gormDB.Model(&models.Vacancy{Id: ID}).Updates(mappedColumns)
-			if update.Error != nil {
-				return update.Error
-			}
-
-			if idx == 0 {
-				log.Printf("updated status: %v", update.RowsAffected)
-			}
-			// if update.RowsAffected == 0 {
-			// 	log.Println("no columns were updated")
-			// }
-
-			_, errhexp := rdb.HExpire(ctxRdb, key, 30*time.Minute, fieldsToUpdate...).Result()
-			if errhexp != nil {
-				return errhexp
-			}
-
-			continue
 		}
 	}
 
