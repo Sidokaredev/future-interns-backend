@@ -15,6 +15,7 @@ func CORSPolicy() gin.HandlerFunc {
 			"https://sidokaredev.space",
 			"https://e-career.polije.sidokaredev.space",
 			"http://192.168.144.152",
+			"https://career.sidokaredev.space",
 		}
 		for _, host := range whitelisted {
 			if origin == host {

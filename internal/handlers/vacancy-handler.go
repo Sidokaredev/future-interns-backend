@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	initializer "go-write-through-service/init"
-	"go-write-through-service/internal/helpers"
 	"go-write-through-service/internal/models"
 	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -66,13 +67,18 @@ type UpdateVacancyProps struct {
 	CreatedAt       *time.Time `json:"created_at"`
 }
 
+type RequestBodyBind struct {
+	Intersection string               `json:"intersection" binding:"required"`
+	Data         []UpdateVacancyProps `json:"data" binding:"required"`
+}
+
 func (h *VacancyHandler) WriteThroughService(ctx *gin.Context) {
 	ctx.Set("CACHE_HIT", 0)
 	ctx.Set("CACHE_MISS", 0)
 
 	var RequestBody []WriteVacancyProps
 
-	if errBind := ctx.ShouldBindJSON(&RequestBody); errBind != nil {
+	if errBind := ctx.ShouldBindJSON(&RequestBody); errBind != nil { // binding request body
 		ctx.Set("CACHE_TYPE", "invalid-write-through")
 
 		ctx.JSON(http.StatusBadRequest, gin.H{
@@ -84,7 +90,7 @@ func (h *VacancyHandler) WriteThroughService(ctx *gin.Context) {
 		return
 	}
 
-	rdb, errRedis := initializer.GetRedisDB()
+	rdb, errRedis := initializer.GetRedisDB() // redis conn
 	if errRedis != nil {
 		ctx.Set("CACHE_TYPE", "invalid-write-through")
 
@@ -96,7 +102,7 @@ func (h *VacancyHandler) WriteThroughService(ctx *gin.Context) {
 
 		return
 	}
-	gormDB, errGorm := initializer.GetMssqlDB()
+	gormDB, errGorm := initializer.GetMssqlDB() // mssql conn
 	if errGorm != nil {
 		ctx.Set("CACHE_TYPE", "invalid-write-through")
 
@@ -118,8 +124,10 @@ func (h *VacancyHandler) WriteThroughService(ctx *gin.Context) {
 
 	ctxRdb := context.Background()
 	ttl := 30 * time.Minute
-	keysCollection := []string{}
-	for index, vacancy := range RequestBody {
+	members := []redis.Z{}
+	pipe := rdb.Pipeline()
+
+	for _, vacancy := range RequestBody { // loop over request body
 		if !indexesMap[vacancy.LineIndustry] {
 			indexesMap[vacancy.LineIndustry] = true
 			indexes = append(indexes, fmt.Sprintf("index:%s", vacancy.LineIndustry))
@@ -132,6 +140,7 @@ func (h *VacancyHandler) WriteThroughService(ctx *gin.Context) {
 			indexesMap[vacancy.WorkArrangement] = true
 			indexes = append(indexes, fmt.Sprintf("index:%s", vacancy.WorkArrangement))
 		}
+
 		hashFields := []string{}
 
 		props := reflect.TypeOf(vacancy)
@@ -141,29 +150,12 @@ func (h *VacancyHandler) WriteThroughService(ctx *gin.Context) {
 		}
 
 		key := fmt.Sprintf("WT:%s", vacancy.ID)
-		keysCollection = append(keysCollection, key)
-		_, err := rdb.HSet(ctxRdb, key, vacancy).Result()
-		if err != nil {
-			ctx.Set("CACHE_TYPE", "invalid-write-through")
-
-			ctx.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error":   err.Error(),
-				"message": fmt.Sprintf("fail set hash at index:%d", index),
-			})
-			return
-		}
-		_, errExp := rdb.HExpire(ctxRdb, key, ttl, hashFields...).Result()
-		if errExp != nil {
-			ctx.Set("CACHE_TYPE", "invalid-write-through")
-
-			ctx.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error":   errExp.Error(),
-				"message": fmt.Sprintf("fail set hash expire at index:%d", index),
-			})
-			return
-		}
+		members = append(members, redis.Z{
+			Score:  float64(vacancy.CreatedAt.UnixNano()),
+			Member: key,
+		})
+		pipe.HSet(ctxRdb, key, vacancy)
+		pipe.HExpire(ctxRdb, key, ttl, hashFields...)
 
 		m_vacancies = append(m_vacancies, models.Vacancy{
 			Id:              vacancy.ID,
@@ -184,12 +176,27 @@ func (h *VacancyHandler) WriteThroughService(ctx *gin.Context) {
 		vacanciesID = append(vacanciesID, vacancy.ID)
 	}
 
-	pipe := rdb.Pipeline()
-	for _, index := range indexes {
-		pipe.SAdd(ctxRdb, index, keysCollection)
+	indexConcat := ""
+	for i, ZKey := range indexes {
+		if i == (len(indexes) - 1) {
+			indexConcat += strings.TrimPrefix(ZKey, "index:")
+		} else {
+			indexConcat += fmt.Sprintf("%s,", strings.TrimPrefix(ZKey, "index:"))
+		}
+
+		pipe.ZAddArgs(ctxRdb, ZKey, redis.ZAddArgs{
+			GT:      true,
+			Members: members,
+		})
 	}
-	_, errExecute := pipe.Exec(ctxRdb)
-	if errExecute != nil {
+
+	pipe.ZInterStore(ctxRdb, indexConcat, &redis.ZStore{
+		Keys:      indexes[:],
+		Aggregate: "MAX",
+	})
+	pipe.Expire(ctxRdb, indexConcat, ttl)
+
+	if _, errExecute := pipe.Exec(ctxRdb); errExecute != nil {
 		ctx.Set("CACHE_TYPE", "invalid-write-through")
 
 		ctx.JSON(http.StatusInternalServerError, gin.H{
@@ -214,20 +221,19 @@ func (h *VacancyHandler) WriteThroughService(ctx *gin.Context) {
 	}
 
 	ctx.Set("CACHE_HIT", 1)
-	ctx.Set("CACHE_MISS", 0)
 	ctx.Set("CACHE_TYPE", "write-through")
 
 	ctx.JSON(http.StatusCreated, gin.H{
 		"success": true,
 		"data":    vacanciesID,
 	})
-}
+} // in use
 
 func (h *VacancyHandler) UpdateWriteThroughService(ctx *gin.Context) {
 	ctx.Set("CACHE_HIT", 0)
 	ctx.Set("CACHE_MISS", 0)
 
-	var RequestBody []UpdateVacancyProps
+	var RequestBody RequestBodyBind
 	if errBind := ctx.ShouldBindJSON(&RequestBody); errBind != nil {
 		ctx.Set("CACHE_TYPE", "invalid-write-through")
 
@@ -264,12 +270,17 @@ func (h *VacancyHandler) UpdateWriteThroughService(ctx *gin.Context) {
 	}
 
 	ctxRdb := context.Background()
+	ttl := 30 * time.Minute
 	pipe := rdb.Pipeline()
+
 	tx := gormDB.Begin()
-	for _, vacancy := range RequestBody {
+
+	for _, vacancy := range RequestBody.Data { // data: []UpdateVacancyProps
 		props := reflect.TypeOf(vacancy)
 		values := reflect.ValueOf(vacancy)
+
 		mappedColumns := map[string]interface{}{}
+
 		hashFields := []interface{}{}
 		fields := []string{}
 		for idx := 0; idx < props.NumField(); idx++ {
@@ -281,19 +292,22 @@ func (h *VacancyHandler) UpdateWriteThroughService(ctx *gin.Context) {
 				continue
 			}
 			mappedColumns[structTag] = values.Field(idx).Elem().Interface()
+
 			hashFields = append(hashFields, structTag, values.Field(idx).Elem().Interface())
 			fields = append(fields, structTag)
 		}
 
 		key := fmt.Sprintf("WT:%s", vacancy.ID)
 		pipe.HSet(ctxRdb, key, hashFields...)
-		pipe.HExpire(ctxRdb, key, 30*time.Minute, fields...)
+		pipe.HExpire(ctxRdb, key, ttl, fields...)
 
 		update := tx.Model(&models.Vacancy{Id: vacancy.ID}).Updates(mappedColumns)
 		if update.RowsAffected == 0 {
 			tx.Rollback()
 		}
 	}
+
+	pipe.Expire(ctxRdb, RequestBody.Intersection, ttl)
 
 	_, errExecute := pipe.Exec(ctxRdb)
 	if errExecute != nil {
@@ -327,128 +341,6 @@ func (h *VacancyHandler) UpdateWriteThroughService(ctx *gin.Context) {
 		"data":    "successfully update all data",
 	})
 }
-
-// func (handler *VacancyHandler) ReadWriteThroughService(ctx *gin.Context) {
-// 	ctx.Set("CACHE_HIT", 0)
-// 	ctx.Set("CACHE_MISS", 0)
-
-// 	lineIndustryQuery, _ := ctx.GetQuery("lineIndustry")
-// 	employeeTypeQuery, _ := ctx.GetQuery("employeeType")
-// 	workArrangement, _ := ctx.GetQuery("workArrangement")
-
-// 	rdb, errRdb := initializer.GetRedisDB()
-// 	if errRdb != nil {
-// 		ctx.Set("CACHE_TYPE", "invalid-write-through")
-
-// 		ctx.JSON(http.StatusInternalServerError, gin.H{
-// 			"success": false,
-// 			"error":   errRdb.Error(),
-// 			"message": "fail getting Redis instance connection",
-// 		})
-// 		return
-// 	}
-
-// 	gormDB, errGorm := initializer.GetMssqlDB()
-// 	if errGorm != nil {
-// 		ctx.Set("CACHE_TYPE", "invalid-write-through")
-
-// 		ctx.JSON(http.StatusInternalServerError, gin.H{
-// 			"success": false,
-// 			"error":   errGorm.Error(),
-// 			"message": "fail getting GORM instance connection",
-// 		})
-// 		return
-// 	}
-
-// 	indexes := [3]string{
-// 		fmt.Sprintf("index:%s", lineIndustryQuery),
-// 		fmt.Sprintf("index:%s", employeeTypeQuery),
-// 		fmt.Sprintf("index:%s", workArrangement),
-// 	}
-
-// 	rdbCtx := context.Background()
-// 	sizeInterCard, errInterCard := rdb.SInterCard(rdbCtx, 500, indexes[0], indexes[1], indexes[2]).Result()
-// 	if errInterCard != nil {
-// 		ctx.Set("CACHE_TYPE", "invalid-write-through")
-
-// 		ctx.JSON(http.StatusInternalServerError, gin.H{
-// 			"success": false,
-// 			"error":   errInterCard.Error(),
-// 			"message": "fail counting intersection size",
-// 		})
-// 		return
-// 	}
-// 	if sizeInterCard < 500 {
-// 		log.Println("reading from database...")
-// 		ctx.Set("CACHE_HIT", 0)
-// 		ctx.Set("CACHE_MISS", 1)
-
-// 		queryParams := []interface{}{
-// 			fmt.Sprintf("%%%s%%", lineIndustryQuery),
-// 			fmt.Sprintf("%%%s%%", employeeTypeQuery),
-// 			fmt.Sprintf("%%%s%%", workArrangement),
-// 		}
-// 		vacancies, errRead := ReadFromDatabase(gormDB, queryParams...)
-// 		if errRead != nil {
-// 			ctx.Set("CACHE_TYPE", "invalid-write-through")
-
-// 			ctx.JSON(http.StatusInternalServerError, gin.H{
-// 				"success": false,
-// 				"error":   errRead.Error(),
-// 				"message": "fail reading from database source",
-// 			})
-// 			return
-// 		}
-
-// 		ctx.Set("CACHE_TYPE", "write-through")
-
-// 		ctx.JSON(http.StatusOK, gin.H{
-// 			"success": true,
-// 			"data":    vacancies,
-// 		})
-// 		return
-// 	}
-
-// 	sInter, errSInter := rdb.SInter(rdbCtx, indexes[0], indexes[1], indexes[2]).Result()
-// 	if errSInter != nil {
-// 		ctx.Set("CACHE_TYPE", "invalid-write-through")
-
-// 		ctx.JSON(http.StatusInternalServerError, gin.H{
-// 			"success": false,
-// 			"error":   errSInter.Error(),
-// 			"message": "fail getting intersection values",
-// 		})
-// 		return
-// 	}
-
-// 	vacancies := []ReadVacancyProps{}
-// 	for _, key := range sInter {
-// 		var vacancy ReadVacancyProps
-
-// 		cmd := rdb.HGetAll(rdbCtx, key)
-// 		if errScanHash := cmd.Scan(&vacancy); errScanHash != nil {
-// 			ctx.Set("CACHE_TYPE", "invalid-write-through")
-
-// 			ctx.JSON(http.StatusInternalServerError, gin.H{
-// 				"success": false,
-// 				"error":   errScanHash.Error(),
-// 				"message": "fail scanning hash field-value",
-// 			})
-// 			return
-// 		}
-
-// 		vacancies = append(vacancies, vacancy)
-// 	}
-
-// 	ctx.Set("CACHE_HIT", 1)
-// 	ctx.Set("CACHE_MISS", 0)
-// 	ctx.Set("CACHE_TYPE", "write-through")
-
-// 	ctx.JSON(http.StatusOK, gin.H{
-// 		"success": true,
-// 		"data":    vacancies,
-// 	})
-// }
 
 func (handler *VacancyHandler) ReadWriteThroughService(ctx *gin.Context) {
 	ctx.Set("CACHE_HIT", 0)
@@ -496,12 +388,13 @@ func (handler *VacancyHandler) ReadWriteThroughService(ctx *gin.Context) {
 		ORDER BY
 			created_at DESC
 	`
-	vacancies := []map[string]interface{}{}
-	getVacancies := gormDB.Raw(sqlQuery,
+	queryParams := []interface{}{
 		fmt.Sprintf("%%%s%%", lineIndustryQuery),
 		fmt.Sprintf("%%%s%%", employeeTypeQuery),
 		fmt.Sprintf("%%%s%%", WorkArrangement),
-	).Scan(&vacancies)
+	}
+	vacancies := []map[string]interface{}{}
+	getVacancies := gormDB.Raw(sqlQuery, queryParams...).Scan(&vacancies)
 	if getVacancies.Error != nil {
 		ctx.Set("CACHE_TYPE", "invalid-write-through")
 		ctx.JSON(http.StatusInternalServerError, gin.H{
@@ -512,27 +405,27 @@ func (handler *VacancyHandler) ReadWriteThroughService(ctx *gin.Context) {
 		return
 	}
 
-	employerKeys := []string{
-		"employer_id",
-		"name",
-		"legal_name",
-		"location",
-		"profile_image_id",
-	}
-	for _, vacancy := range vacancies {
-		employer := map[string]interface{}{}
-		for _, key := range employerKeys {
-			if key == "employer_id" {
-				employer["id"] = vacancy[key]
-				delete(vacancy, key)
-				continue
-			}
-			employer[key] = vacancy[key]
-			delete(vacancy, key)
-		}
-		helpers.TransformsIdToPath([]string{"profile_image_id"}, employer)
-		vacancy["employer"] = employer
-	}
+	// employerKeys := []string{
+	// 	"employer_id",
+	// 	"name",
+	// 	"legal_name",
+	// 	"location",
+	// 	"profile_image_id",
+	// }
+	// for _, vacancy := range vacancies {
+	// 	employer := map[string]interface{}{}
+	// 	for _, key := range employerKeys {
+	// 		if key == "employer_id" {
+	// 			employer["id"] = vacancy[key]
+	// 			delete(vacancy, key)
+	// 			continue
+	// 		}
+	// 		employer[key] = vacancy[key]
+	// 		delete(vacancy, key)
+	// 	}
+	// 	helpers.TransformsIdToPath([]string{"profile_image_id"}, employer)
+	// 	vacancy["employer"] = employer
+	// }
 
 	ctx.Set("CACHE_TYPE", "write-through")
 
@@ -540,7 +433,7 @@ func (handler *VacancyHandler) ReadWriteThroughService(ctx *gin.Context) {
 		"success": true,
 		"data":    vacancies,
 	})
-}
+} // in use
 
 func ReadFromDatabase(gormDB *gorm.DB, queryParams ...interface{}) ([]ReadVacancyProps, error) {
 	sql := `

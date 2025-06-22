@@ -69,7 +69,7 @@ func CPUTimeUsage(elapsedTime time.Duration, elapsedCpuTime float64) (CPUs, erro
 		TotalCPUTime: totalCpuTimeUsageInPercent,
 		Elapsed:      elapsedTime.Milliseconds(),
 	}, nil
-}
+} // cgroup v1
 
 func GetCPUAcctUsage() (float64, error) {
 	const nanoToMilli float64 = 1000_000
@@ -85,7 +85,7 @@ func GetCPUAcctUsage() (float64, error) {
 	}
 
 	return float64(cpuAcctUsageValue) / nanoToMilli, nil
-}
+} // cgroup v1
 
 func GetCPUStatUsage() (float64, error) {
 	const microToMilli = 1_000
@@ -125,7 +125,7 @@ func GetCPUStatUsage() (float64, error) {
 	}
 
 	return 0, errors.New("cannot find 'usage_usec' value")
-}
+} // cgroup v2
 
 func CalcCPUTimeUsage(elapsedTime time.Duration, elapsedCpuTime float64) (CPUs, error) {
 	const microToMilli = 1_000
@@ -170,7 +170,7 @@ func CalcCPUTimeUsage(elapsedTime time.Duration, elapsedCpuTime float64) (CPUs, 
 	} else {
 		totalCpuTimeInPercent = (elapsedCpuTime / maxCpuTime) * 100
 	}
-	log.Printf("time: %vms | cpu time usage: %.2f | cpu quota ms: %.2f | cpu period ms: %.2f | max cpu ms: %.2f | percent: %v", elapsedTime.Milliseconds(), elapsedCpuTime, cpuQuotaInMs, cpuPeriodInMs, maxCpuTime, ((totalCpuTimeInPercent * 100) / 100))
+	// log.Printf("time: %vms | cpu time usage: %.2f | cpu quota ms: %.2f | cpu period ms: %.2f | max cpu ms: %.2f | percent: %v", elapsedTime.Milliseconds(), elapsedCpuTime, cpuQuotaInMs, cpuPeriodInMs, maxCpuTime, ((totalCpuTimeInPercent * 100) / 100))
 
 	return CPUs{
 		Period:       int(cpuPeriodInMs),
@@ -180,4 +180,4 @@ func CalcCPUTimeUsage(elapsedTime time.Duration, elapsedCpuTime float64) (CPUs, 
 		TotalCPUTime: totalCpuTimeInPercent,
 		Elapsed:      elapsedTime.Milliseconds(),
 	}, nil
-}
+} // cgroup v2
