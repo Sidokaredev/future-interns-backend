@@ -163,6 +163,8 @@ func DataUpdater(rdb *redis.Client, gormDB *gorm.DB) error {
 		return nil
 	}
 
+	ttl := 30 * time.Minute
+	pipe := rdb.Pipeline()
 	for _, intersectionKey := range elements {
 		intersecMembers, errIntersec := rdb.ZRevRangeByScore(ctxRdb, intersectionKey, &redis.ZRangeBy{ // get members by intersection key DESC
 			Min:    "-inf",
@@ -228,14 +230,15 @@ func DataUpdater(rdb *redis.Client, gormDB *gorm.DB) error {
 				/*
 					logically if there any data updated, all Hash fields should re-assign TTL
 				*/
-				_, errhexp := rdb.HExpire(ctxRdb, HKey, 30*time.Minute, hfields...).Result()
-				if errhexp != nil {
-					return errhexp
-				}
-
-				continue
+				pipe.HExpire(ctxRdb, HKey, ttl, hfields...)
 			}
 		}
+		pipe.Expire(ctxRdb, intersectionKey, ttl) // re-assign TTL
+	}
+
+	if _, errExec := pipe.Exec(ctxRdb); errExec != nil {
+		log.Println("Redis: pipeline execution error!")
+		return errExec
 	}
 
 	return nil
