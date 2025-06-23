@@ -609,5 +609,4 @@ func (c *Cache) CacheAside(ctx *gin.Context) {
 		},
 	})
 	ctx.Abort()
-	return
 }

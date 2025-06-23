@@ -84,7 +84,9 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 				Timestamp:    timestampQuery,
 			}
 			cache.CacheAside(ctx)
+			log.Println("AFTER DOING CACHE ASIDE")
 		}
+		return
 	}
 
 	var vacancies []map[string]interface{}
