@@ -295,13 +295,13 @@ func (c *Cache) CacheAside(ctx *gin.Context) {
 				hfields = append(hfields, key)
 			}
 			key := fmt.Sprintf("CA:%s", vacancy["id"])
-			t, err := time.Parse(time.RFC3339, vacancy["created_at"].(string))
-			if err != nil {
-				fmt.Println("Error parsing time:", err)
-				return
-			}
+			// t, err := time.Parse(time.RFC3339, vacancy["created_at"].(string))
+			// if err != nil {
+			// 	fmt.Println("Error parsing time:", err)
+			// 	return
+			// }
 			members = append(members, redis.Z{
-				Score:  float64(t.UnixNano()),
+				Score:  float64(vacancy["created_at"].(time.Time).UnixNano()),
 				Member: key,
 			})
 			pipe.HSet(rdbCtx, key, vacancy)
@@ -497,13 +497,13 @@ func (c *Cache) CacheAside(ctx *gin.Context) {
 				hfields = append(hfields, key)
 			}
 			key := fmt.Sprintf("CA:%s", vacancy["id"])
-			t, err := time.Parse(time.RFC3339, vacancy["created_at"].(string))
-			if err != nil {
-				fmt.Println("Error parsing time:", err)
-				return
-			}
+			// t, err := time.Parse(time.RFC3339, vacancy["created_at"].(string))
+			// if err != nil {
+			// 	fmt.Println("Error parsing time:", err)
+			// 	return
+			// }
 			members = append(members, redis.Z{
-				Score:  float64(t.UnixNano()),
+				Score:  float64(vacancy["created_at"].(time.Time).UnixNano()),
 				Member: key,
 			})
 			pipe.HSet(rdbCtx, key, vacancy)
