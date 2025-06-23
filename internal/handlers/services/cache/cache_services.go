@@ -608,4 +608,6 @@ func (c *Cache) CacheAside(ctx *gin.Context) {
 			"count":     vacanciesCount,
 		},
 	})
+	ctx.Abort()
+	return
 }
