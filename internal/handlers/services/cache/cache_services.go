@@ -442,7 +442,7 @@ func (c *Cache) CacheAside(ctx *gin.Context) {
 			}).
 				Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
 				Order("vacancies.created_at DESC").
-				Where(`id IN ?`, unCachedVacancyKeys).
+				Where(`vacancies.id IN ?`, unCachedVacancyKeys).
 				Find(&uncachedVacancies)
 
 			if errGetVacanciesList.Error != nil {
