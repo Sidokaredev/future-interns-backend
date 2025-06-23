@@ -18,6 +18,10 @@ func init() {
 	if err != nil {
 		log.Fatalf("Database initialization failed: %v", err)
 	}
+	if errRedis := initializer.RedisServerInit(); errRedis != nil {
+		log.Println("redis :" + errRedis.Error())
+		panic(errRedis)
+	}
 	// initializer.DockerClientInit() // control docker over socker --mount /var/run/docker.sock
 }
 

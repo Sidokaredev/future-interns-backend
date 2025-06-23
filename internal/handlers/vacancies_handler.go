@@ -3,6 +3,8 @@ package handlers
 import (
 	"fmt"
 	initializer "future-interns-backend/init"
+
+	"future-interns-backend/internal/handlers/services/cache"
 	"future-interns-backend/internal/models"
 	"log"
 	"net/http"
@@ -66,6 +68,24 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 	lineIndustry := fmt.Sprintf("%%%s%%", strings.TrimSpace(lineIndustryQuery))
 	employeeTypeQuery, _ := ctx.GetQuery("employeeType")
 	employeeType := fmt.Sprintf("%%%s%%", strings.TrimSpace(employeeTypeQuery))
+
+	timestampQuery, _ := ctx.GetQuery("time")
+	withCacheQuery, _ := ctx.GetQuery("withCache")
+	if withCacheQuery != "" {
+		switch strings.TrimSpace(withCacheQuery) {
+		case "cache-aside":
+			cache := cache.Cache{
+				Limit:        int64(limit),
+				Page:         int64(page),
+				Keyword:      keywordQuery,
+				Location:     locationQuery,
+				LineIndustry: lineIndustryQuery,
+				EmployeeType: employeeType,
+				Timestamp:    timestampQuery,
+			}
+			cache.CacheAside(ctx)
+		}
+	}
 
 	var vacancies []map[string]interface{}
 	var applied []string
