@@ -3,9 +3,11 @@ package handlers
 import (
 	"fmt"
 	initializer "future-interns-backend/init"
+	"regexp"
+	"time"
 
-	"future-interns-backend/internal/handlers/services/cache"
 	"future-interns-backend/internal/models"
+	"future-interns-backend/internal/services/caching"
 	"log"
 	"net/http"
 	"strconv"
@@ -18,99 +20,12 @@ import (
 type VacancyHandlers struct {
 }
 
-func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
-	/*
-		API Requirements:
-		1. Only retrieve 10 vacancies if it not logged in.
-		2. Vacancies only can be applied to candidates.
-		3. Duplicate applied is not allowed.
-		4.
-	*/
-	authenticated, _ := ctx.Get("authenticated")
-	identity, _ := ctx.Get("identity-access")
-	// permissions, _ := ctx.Get("permissions")
-
-	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
-
-	pageQuery, _ := ctx.GetQuery("page")
-	page, errConvPage := strconv.Atoi(pageQuery)
-	if errConvPage != nil {
-		page = 1
-	}
-
-	limitQuery, _ := ctx.GetQuery("limit")
-	limit, errConvLimit := strconv.Atoi(limitQuery)
-	if errConvLimit != nil {
-		limit = 10
-	}
-
-	if (page > 1 || limit > 10) && !authenticated.(bool) {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "invalid access token",
-			"message": "Log in to gain exclusive access to all job openings and discover your next opportunity.",
-		})
-
-		ctx.Abort()
-		return
-	}
-	if limitQuery == "none" && authenticated.(bool) {
-		limit = -1
-	}
-
-	offset := (limit * page) - limit
-
-	keywordQuery, _ := ctx.GetQuery("keyword")
-	keyword := fmt.Sprintf("%%%s%%", strings.TrimSpace(keywordQuery))
-	locationQuery, _ := ctx.GetQuery("location")
-	location := fmt.Sprintf("%%%s%%", strings.TrimSpace(locationQuery))
-	lineIndustryQuery, _ := ctx.GetQuery("lineIndustry")
-	lineIndustry := fmt.Sprintf("%%%s%%", strings.TrimSpace(lineIndustryQuery))
-	employeeTypeQuery, _ := ctx.GetQuery("employeeType")
-	employeeType := fmt.Sprintf("%%%s%%", strings.TrimSpace(employeeTypeQuery))
-
-	timestampQuery, _ := ctx.GetQuery("time")
-	withCacheQuery, _ := ctx.GetQuery("withCache")
-	if withCacheQuery != "" {
-		switch strings.TrimSpace(withCacheQuery) {
-		case "cache-aside":
-			cache := cache.Cache{
-				Limit:        int64(limit),
-				Page:         int64(page),
-				Keyword:      keywordQuery,
-				Location:     locationQuery,
-				LineIndustry: lineIndustryQuery,
-				EmployeeType: employeeType,
-				Timestamp:    timestampQuery,
-			}
-			cache.CacheAside(ctx)
-			log.Println("AFTER DOING CACHE ASIDE")
-		}
-		return
-	}
-
-	var vacancies []map[string]interface{}
-	var applied []string
-	var vacanciesCount int64
-
-	gormDB, _ := initializer.GetGorm()
-	errGetVacancies := gormDB.Transaction(func(tx *gorm.DB) error {
-		errCountVacancies := tx.Model(&models.Vacancy{}).
-			Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
-			Order("vacancies.created_at DESC").
-			Where(`vacancies.is_inactive = ? AND
-			employers.location LIKE ? AND
-			(vacancies.position LIKE ? OR
-			vacancies.description LIKE ? OR
-			vacancies.qualification LIKE ? OR
-			vacancies.responsibility LIKE ?) AND
-			vacancies.line_industry LIKE ? AND
-			vacancies.employee_type LIKE ?`, false, location, keyword, keyword, keyword, keyword, lineIndustry, employeeType).
-			Count(&vacanciesCount).Error
-		if errCountVacancies != nil {
-			return errCountVacancies
-		}
-		errGetVacanciesList := tx.Model(&models.Vacancy{}).Select([]string{
+// variadic -> [time,  limit, offset, location, keyword, line industry, employee type]
+func FallbackVacancies(queries ...any) (*caching.FallbackReturnValues, error) {
+	var vacancies []map[string]any
+	DB, _ := initializer.GetGorm()
+	getVacancies := DB.Model(&models.Vacancy{}).
+		Select([]string{
 			"vacancies.id",
 			"vacancies.position",
 			"vacancies.description",
@@ -129,54 +44,23 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 			"employers.location",
 			"employers.profile_image_id",
 		}).
-			Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
-			Order("vacancies.created_at DESC").
-			Where(`vacancies.is_inactive = ? AND
-						 employers.location LIKE ? AND
-						 (vacancies.position LIKE ? OR
-						 vacancies.description LIKE ? OR
-						 vacancies.qualification LIKE ? OR
-						 vacancies.responsibility LIKE ?) AND
-						 vacancies.line_industry LIKE ? AND
-						 vacancies.employee_type LIKE ?`, false, location, keyword, keyword, keyword, keyword, lineIndustry, employeeType).
-			Limit(limit).
-			Offset(offset).
-			Find(&vacancies)
+		Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
+		Where(`vacancies.is_inactive = ? AND
+		vacancies.created_at <= ? AND
+		employers.location LIKE ? AND
+		(vacancies.position LIKE ? OR
+		vacancies.description LIKE ? OR
+		vacancies.qualification LIKE ? OR
+		vacancies.responsibility LIKE ?) AND
+		vacancies.line_industry LIKE ? AND
+		vacancies.employee_type LIKE ?`, false, queries[0], queries[3], queries[4], queries[4], queries[4], queries[4], queries[5], queries[6]).
+		Order("vacancies.created_at DESC").
+		Limit(queries[1].(int)).
+		Offset(queries[2].(int)).
+		Find(&vacancies)
 
-		if errGetVacanciesList.Error != nil {
-			return errGetVacanciesList.Error
-		} else if errGetVacanciesList.RowsAffected == 0 {
-			return fmt.Errorf("%v rows, no data vacancies found", errGetVacanciesList.RowsAffected)
-		}
-
-		if authenticated.(bool) && identity.(string) == "candidate" {
-			claims := ParseJWT(bearerToken)
-			var candidateID string
-			errCandidateID := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", claims.Id).First(&candidateID).Error
-			if errCandidateID != nil {
-				log.Println("candidate has not completed their profile as a candidate")
-				applied = []string{}
-				return nil
-				// return errCandidateID
-			}
-
-			getPipelines := tx.Model(&models.Pipeline{}).Select([]string{"vacancy_id"}).Where("candidate_id = ?", candidateID).Find(&applied)
-			if getPipelines.Error != nil {
-				return getPipelines.Error
-			}
-		}
-		return nil
-	})
-
-	if errGetVacancies != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   errGetVacancies.Error(),
-			"message": "error querying or record not found",
-		})
-
-		ctx.Abort()
-		return
+	if getVacancies.Error != nil {
+		return nil, getVacancies.Error
 	}
 
 	employerKeys := []string{
@@ -195,12 +79,185 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 		vacancy["employer"] = employer
 	}
 
+	return &caching.FallbackReturnValues{
+		Data: vacancies,
+		Indexes: []string{
+			queries[3].(string),
+			queries[4].(string),
+			queries[5].(string),
+			queries[6].(string),
+		},
+	}, nil
+}
+
+func CountAndApplied(candidateID string, queries []any, count *int64, applied *[]string) error {
+	DB, err := initializer.GetGorm()
+	if err != nil {
+		return err
+	}
+
+	errTransacQuery := DB.Transaction(func(tx *gorm.DB) error {
+		if candidateID == "" {
+			applied = &[]string{}
+		} else {
+			fetchApplied := tx.Model(&models.Pipeline{}).Select("vacancy_id").Where("candidate_id = ?", candidateID).Find(applied)
+			if fetchApplied.Error != nil {
+				return fetchApplied.Error
+			}
+		}
+
+		fetchCount := tx.Model(&models.Vacancy{}).
+			Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
+			Where(`vacancies.is_inactive = ? AND
+		vacancies.created_at <= ? AND
+		employers.location LIKE ? AND
+		(vacancies.position LIKE ? OR
+		vacancies.description LIKE ? OR
+		vacancies.qualification LIKE ? OR
+		vacancies.responsibility LIKE ?) AND
+		vacancies.line_industry LIKE ? AND
+		vacancies.employee_type LIKE ?`, false, queries[0], queries[3], queries[4], queries[4], queries[4], queries[4], queries[5], queries[6]).
+			Order("vacancies.created_at DESC").Count(count)
+
+		if fetchCount.Error != nil {
+			return fetchCount.Error
+		}
+
+		return nil
+	})
+
+	if errTransacQuery != nil {
+		return errTransacQuery
+	}
+
+	return nil
+}
+
+func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
+	// middleware:public_identity_check
+	authenticated := ctx.GetBool("authenticated")
+	candidateID := ctx.GetString("candidate-id")
+
+	page, errConvPage := strconv.Atoi(ctx.Query("page"))
+	if errConvPage != nil {
+		page = 1
+	}
+	limit, errConvLimit := strconv.Atoi(ctx.Query("limit"))
+	if errConvLimit != nil {
+		limit = 10
+	}
+
+	if !authenticated && (page > 1 || limit > 10) { // pengguna yang belum terauthentikasi hanya tidak bisa melihat lebih dari 10 data
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "invalid access token",
+			"message": "Masuk terlebih dahulu untuk melihat lebih banyak lowongan pekerjaan",
+		})
+		return
+	}
+
+	offset := (limit * page) - limit
+
+	searchQueriesWilcards := []string{
+		fmt.Sprintf("%%%s%%", strings.TrimSpace(ctx.Query("keyword"))),
+		fmt.Sprintf("%%%s%%", strings.TrimSpace(ctx.Query("location"))),
+		fmt.Sprintf("%%%s%%", strings.TrimSpace(ctx.Query("lineIndustry"))),
+		fmt.Sprintf("%%%s%%", strings.TrimSpace(ctx.Query("employeeType"))),
+	}
+
+	queryValues := []string{}
+	re := regexp.MustCompile("%(.+?)%") // mengambil search query parameter yang hanya memiliki nilai [%SEARCH%]
+	for _, val := range searchQueriesWilcards {
+		if val != "%%" {
+			captured := re.FindAllStringSubmatch(val, -1)
+			queryValues = append(queryValues, captured[0][(len(captured[0])-1)])
+		}
+	}
+
+	intersectionKey := "" // menyusun intersection untuk setiap search query parameter [Keyword:Location:LineIndustry:EmployeeType]
+	for index, val := range queryValues {
+		if index == (len(queryValues) - 1) {
+			intersectionKey += fmt.Sprintf("%v", val)
+			continue
+		}
+
+		intersectionKey += fmt.Sprintf("%v:", val)
+	}
+
+	cacheQuery := ctx.Query("cache")
+
+	var scoreMax string
+	tmScore, errParse := time.Parse(time.RFC3339, ctx.Query("time")) // mengambil nilai [time] sebagai UnixNano untuk Redis dan RFC3339 untuk MS SQL Server
+	if errParse != nil {
+		now := time.Now().UnixNano()
+		scoreMax = strconv.Itoa(int(now))
+	} else {
+		scoreMax = strconv.Itoa(int(tmScore.UnixNano()))
+	}
+
+	// how if query("time") empty? tmScore?
+
+	var count int64
+	var applied []string
+	errCountApplied := CountAndApplied(candidateID, []any{ // mengambil jumlah data berdasarkan search query parameter dan ID lowongan pekerjaan yang telah di apply (hanya kandidat)
+		tmScore.Format(time.RFC3339),
+		limit, offset,
+		searchQueriesWilcards[0],
+		searchQueriesWilcards[1],
+		searchQueriesWilcards[2],
+		searchQueriesWilcards[3],
+	}, &count, &applied)
+	if errCountApplied != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errCountApplied.Error(),
+			"message": "Gagal melakukan query [count, applied]",
+		})
+		return
+	}
+
+	cache := caching.NewCacheStrategy(cacheQuery, FallbackVacancies, []any{ // membuat instance cache berdasarkan pola [cache-aside, read-through] :!READ ONLY
+		tmScore.Format(time.RFC3339),
+		limit, offset,
+		searchQueriesWilcards[0],
+		searchQueriesWilcards[1],
+		searchQueriesWilcards[2],
+		searchQueriesWilcards[3],
+	})
+
+	var vacancies []map[string]any
+	errCache := cache.GetCache(caching.GetCacheArgs{ // mengambil nilai data yang ada pada cache, dan menjalankan FallbackCall jika cache kosong
+		Intersection: intersectionKey,
+		Min:          "-inf",
+		Max:          scoreMax,
+		Count:        int64(limit),
+		Offset:       int64(offset),
+		Indexes:      queryValues,
+		CacheArgs: caching.CacheProps{
+			KeyPropName:    "id",
+			ScorePropName:  "created_at",
+			ScoreType:      "time.Time",
+			MemberPropName: "id",
+		},
+	}, &vacancies)
+
+	if errCache != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errCache.Error(),
+			"message": fmt.Sprintf("Gagal melakukan cache dengan pola [:%v]", cacheQuery),
+		})
+
+		return
+	}
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"vacancies": vacancies,
+			"count":     count,
 			"applied":   applied,
-			"count":     vacanciesCount,
+			"vacancies": vacancies,
+			"last_time": vacancies[len(vacancies)-1]["created_at"], // validate if len == 0
 		},
 	})
 }

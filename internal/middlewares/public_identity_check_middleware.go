@@ -18,6 +18,7 @@ func PublicIdentityCheck() gin.HandlerFunc {
 		var authenticated bool
 		var identity map[string]interface{}
 		var permissions []string
+		var candidateID string
 
 		bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
 		claims := handlers.TokenClaims{}
@@ -34,6 +35,7 @@ func PublicIdentityCheck() gin.HandlerFunc {
 
 			if errParse == nil { // if parse token go for successful
 				authenticated = true // set authenticated "true" after pass token parse
+				candidateID = claims.Id
 
 				gormDB, _ := initializer.GetGorm()
 				errGetIdentity := gormDB.Model(&models.IdentityAccess{}).Select([]string{
@@ -54,9 +56,11 @@ func PublicIdentityCheck() gin.HandlerFunc {
 			}
 		}
 
-		ctx.Set("authenticated", authenticated)
-		ctx.Set("identity-access", identity["type"])
-		ctx.Set("permissions", permissions)
+		ctx.Set("authenticated", authenticated)      // bool
+		ctx.Set("identity-access", identity["type"]) // map
+		ctx.Set("permissions", permissions)          // slice
+		ctx.Set("token", bearerToken)                // string
+		ctx.Set("candidate-id", candidateID)         // string
 
 		ctx.Next()
 	}

@@ -107,6 +107,9 @@ type Cache struct {
 	EmployeeType string
 }
 
+type AirType struct {
+}
+
 func (c *Cache) CacheAside(ctx *gin.Context) {
 	authenticated, _ := ctx.Get("authenticated")
 	identity, _ := ctx.Get("identity-access")
