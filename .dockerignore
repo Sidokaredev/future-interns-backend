@@ -1,1 +1,3 @@
-configs/
+README.md
+Dockerfile
+Dockerfile.test

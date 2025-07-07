@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	initializer "go-cache-aside-service/init"
+	"go-cache-aside-service/internal/helpers"
 	"go-cache-aside-service/internal/models"
+	"go-cache-aside-service/internal/services/caches"
+	"go-cache-aside-service/internal/services/vacancies"
 	"log"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -583,4 +587,240 @@ func ReadFromDatabase(gormDB *gorm.DB, queryParams ...interface{}) ([]VacancyPro
 	}
 
 	return vacancies, nil
+}
+
+// public
+func VacanciesWithCacheAside(gctx *gin.Context) {
+	// middleware -> public-identity-check
+	authenticated := gctx.GetBool("authenticated")
+	userID := gctx.GetString("user-id")
+
+	page, errConvPage := strconv.Atoi(gctx.Query("page"))
+	if errConvPage != nil {
+		page = 1
+	}
+	limit, errConvLimit := strconv.Atoi(gctx.Query("limit"))
+	if errConvLimit != nil {
+		limit = 10
+	}
+
+	if !authenticated && (page > 1 || limit > 10) { // pengguna yang belum terauthentikasi hanya tidak bisa melihat lebih dari 10 data
+		gctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "pengguna tidak ter-autentikasi",
+			"message": "Masuk terlebih dahulu untuk melihat lebih banyak lowongan pekerjaan",
+		})
+		return
+	}
+
+	offset := (limit * page) - limit
+
+	searchQueriesWilcards := []string{
+		fmt.Sprintf("%%%s%%", strings.TrimSpace(gctx.Query("keyword"))),
+		fmt.Sprintf("%%%s%%", strings.TrimSpace(gctx.Query("location"))),
+		fmt.Sprintf("%%%s%%", strings.TrimSpace(gctx.Query("lineIndustry"))),
+		fmt.Sprintf("%%%s%%", strings.TrimSpace(gctx.Query("employeeType"))),
+	}
+
+	queryValues := []string{}
+	re := regexp.MustCompile("%(.+?)%") // mengambil search query parameter yang hanya memiliki nilai [%SEARCH%]
+	for _, val := range searchQueriesWilcards {
+		if val != "%%" {
+			captured := re.FindAllStringSubmatch(val, -1)
+			queryValues = append(queryValues, captured[0][(len(captured[0])-1)])
+		}
+	}
+
+	intersectionKey := "" // menyusun intersection untuk setiap search query parameter [Keyword:Location:LineIndustry:EmployeeType]
+	for index, val := range queryValues {
+		if index == (len(queryValues) - 1) {
+			intersectionKey += fmt.Sprintf("%v", val)
+			continue
+		}
+
+		intersectionKey += fmt.Sprintf("%v:", val)
+	}
+
+	cacheQuery := gctx.Query("cache")
+
+	var scoreMax string
+	tmScore, errParse := time.Parse(time.RFC3339, gctx.Query("time")) // mengambil nilai [time] sebagai UnixNano untuk Redis dan RFC3339 untuk MS SQL Server
+	if errParse != nil {
+		tmScore = time.Now()
+		scoreMax = strconv.Itoa(int(tmScore.UnixNano()))
+	} else {
+		scoreMax = strconv.Itoa(int(tmScore.UnixNano()))
+	}
+
+	var count int64
+	var applied []string
+	errCountApplied := vacancies.CountAndApplied(userID, vacancies.VacanciesArgs{ // mengambil jumlah data berdasarkan search query parameter dan ID lowongan pekerjaan yang telah di apply (hanya kandidat)
+		Time:         tmScore.Format(time.RFC3339),
+		Keyword:      searchQueriesWilcards[0],
+		Location:     searchQueriesWilcards[1],
+		LineIndustry: searchQueriesWilcards[2],
+		EmployeeType: searchQueriesWilcards[3],
+	}, &count, &applied)
+	if errCountApplied != nil {
+		gctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errCountApplied.Error(),
+			"message": "Gagal melakukan query [count, applied]",
+		})
+		return
+	}
+
+	var fallbackFunc caches.FallbackCall = func(args caches.FallbackArgs) (*caches.FallbackReturn, error) {
+		var vacancies []map[string]any
+		DB, _ := initializer.GetMssqlDB()
+		getVacancies := DB.Model(&models.Vacancy{}).
+			Select([]string{
+				"vacancies.id",
+				"vacancies.position",
+				"vacancies.description",
+				"vacancies.qualification",
+				"vacancies.responsibility",
+				"vacancies.line_industry",
+				"vacancies.employee_type",
+				"vacancies.min_experience",
+				"vacancies.salary",
+				"vacancies.work_arrangement",
+				"vacancies.sla",
+				"vacancies.is_inactive",
+				"vacancies.created_at",
+				"employers.name",
+				"employers.legal_name",
+				"employers.location",
+				"employers.profile_image_id",
+			}).
+			Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
+			Where(`vacancies.is_inactive = ? AND
+				vacancies.created_at <= ? AND
+				employers.location LIKE ? AND
+				(vacancies.position LIKE ? OR
+				vacancies.description LIKE ? OR
+				vacancies.qualification LIKE ? OR
+				vacancies.responsibility LIKE ?) AND
+				vacancies.line_industry LIKE ? AND
+				vacancies.employee_type LIKE ?`,
+				false,
+				args.Time,
+				args.Location,
+				args.Keyword,
+				args.Keyword,
+				args.Keyword,
+				args.Keyword,
+				args.LineIndustry,
+				args.EmployeeType).
+			Order("vacancies.created_at DESC").
+			Offset(args.Offset).
+			Limit(args.FetchNext).
+			Find(&vacancies)
+
+		if getVacancies.Error != nil {
+			return nil, getVacancies.Error
+		}
+
+		if getVacancies.RowsAffected == 0 {
+			return &caches.FallbackReturn{
+				Data:    []map[string]any{},
+				Indexes: []string{},
+			}, nil
+		}
+
+		employerKeys := []string{
+			"name",
+			"legal_name",
+			"location",
+			"profile_image_id",
+		}
+
+		// -> harus mendata indexes nya [line_industry, employee_type]
+		indexes := map[string]any{}
+
+		for _, vacancy := range vacancies {
+			if indexes["line_industry"] == nil {
+				indexes["line_industry"] = vacancy["line_industry"]
+			}
+			if indexes["employee_type"] == nil {
+				indexes["employee_type"] = vacancy["employee_type"]
+			}
+
+			employer := map[string]any{}
+			for _, key := range employerKeys {
+				employer[key] = vacancy[key]
+			}
+			helpers.TransformsIdToPath([]string{"profile_image_id"}, employer)
+			vacancy["employer"] = employer
+		}
+
+		return &caches.FallbackReturn{
+			Data: vacancies,
+			Indexes: []string{
+				indexes["line_industry"].(string),
+				indexes["employee_type"].(string),
+			},
+		}, nil
+	}
+
+	// membuat instance cache berdasarkan pola [cache-aside, read-through] :!READ ONLY
+	ca := caches.NewCacheAside(fallbackFunc, caches.FallbackArgs{
+		VacanciesArgs: vacancies.VacanciesArgs{
+			Time:         tmScore.Format(time.RFC3339),
+			Keyword:      searchQueriesWilcards[0],
+			Location:     searchQueriesWilcards[1],
+			LineIndustry: searchQueriesWilcards[2],
+			EmployeeType: searchQueriesWilcards[3],
+		},
+		Offset:    offset,
+		FetchNext: limit,
+	})
+
+	var vacancies []map[string]any
+	errCache := ca.GetCache(caches.CacheArgs{ // mengambil nilai data yang ada pada cache, dan menjalankan FallbackCall jika cache kosong
+		Intersection: intersectionKey,
+		Min:          "-inf",
+		Max:          scoreMax,
+		Count:        int64(limit),
+		Offset:       int64(offset),
+		Indexes:      queryValues,
+		CacheArgs: caches.CacheProps{
+			KeyPropName:    "id",
+			ScorePropName:  "created_at",
+			ScoreType:      "time.Time",
+			MemberPropName: "id",
+		},
+	}, &vacancies)
+
+	if errCache != nil {
+		gctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errCache.Error(),
+			"message": fmt.Sprintf("Gagal melakukan cache dengan pola [:%v]", cacheQuery),
+		})
+
+		return
+	}
+
+	var last_time string
+	if len(vacancies) == 0 {
+		last_time = "Data pencarian telah ditampilkan secara kesluruhan"
+	} else {
+		timeParse, ok := vacancies[len(vacancies)-1]["created_at"].(time.Time)
+		if ok {
+			last_time = timeParse.Format(time.RFC3339)
+		} else {
+			last_time = vacancies[len(vacancies)-1]["created_at"].(string)
+		}
+	}
+
+	gctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"count":     count,
+			"applied":   applied,
+			"vacancies": vacancies,
+			"last_time": last_time, // validate if len == 0
+		},
+	})
 }
