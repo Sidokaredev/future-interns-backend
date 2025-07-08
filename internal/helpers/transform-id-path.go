@@ -29,7 +29,7 @@ func TransformsIdToPath(targets []string, record interface{}) {
 					}
 
 					if value != nil && value != 0 {
-						recordTyped[index][newKey] = fmt.Sprintf("/api/v1/%s/%v", pathType, value)
+						recordTyped[index][newKey] = fmt.Sprintf("/%s/%v", pathType, value)
 					} else {
 						recordTyped[index][newKey] = nil
 					}
@@ -56,7 +56,7 @@ func TransformsIdToPath(targets []string, record interface{}) {
 					}
 				}
 				if value != nil && value != 0 {
-					recordTyped[newKey] = fmt.Sprintf("/api/v1/%s/%v", pathType, value)
+					recordTyped[newKey] = fmt.Sprintf("/%s/%v", pathType, value)
 				} else {
 					recordTyped[newKey] = nil
 				}

@@ -1,2 +1,5 @@
-/configs/*
-go-read-through-service.exe
+configs/
+tmp/
+Dockerfile.dev
+Dockerfile.test
+.air.toml
