@@ -15,7 +15,7 @@ type FallbackArgs struct {
 
 type CacheArgs struct {
 	Indexes      []string
-	CacheArgs    CacheProps
+	CacheProps   CacheProps
 	Intersection string
 	Min, Max     string
 	Offset       int64

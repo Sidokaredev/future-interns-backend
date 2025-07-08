@@ -32,6 +32,7 @@ func (ca *CacheAside) GetCache(args CacheArgs, dest *[]map[string]any) error {
 		return err
 	}
 
+	log.Printf("Looking for [%v] ... \n", args.Intersection)
 	ctx := context.Background()
 	vacancyKeys, errKeys := rdb.ZRevRangeByScore(ctx, args.Intersection, &redis.ZRangeBy{
 		Min:    args.Min,
@@ -44,8 +45,6 @@ func (ca *CacheAside) GetCache(args CacheArgs, dest *[]map[string]any) error {
 	}
 
 	if len(vacancyKeys) == 0 {
-		log.Println("calling fallback ...")
-
 		fallback, errFallback := ca.Fallback(ca.FallbackArgs)
 		if errFallback != nil {
 			return fmt.Errorf("fallback error: %v", errFallback.Error())
@@ -57,22 +56,30 @@ func (ca *CacheAside) GetCache(args CacheArgs, dest *[]map[string]any) error {
 			return nil
 		}
 
-		hash := ExtractToHash(args.CacheArgs.KeyPropName, fallback.Data)
+		hash := ExtractToHash(args.CacheProps.KeyPropName, fallback.Data)
 		sortedSet := NewSortedSetCollection(hash, SortedSetArgs{
-			ScorePropName:  args.CacheArgs.ScorePropName,
-			ScoreType:      args.CacheArgs.ScoreType,
-			MemberPropName: args.CacheArgs.MemberPropName,
+			ScorePropName:  args.CacheProps.ScorePropName,
+			ScoreType:      args.CacheProps.ScoreType,
+			MemberPropName: args.CacheProps.MemberPropName,
 		})
-
-		if len(args.Indexes) == 0 {
-			sortedSet.Keys = fallback.Indexes
-		} else {
-			sortedSet.Keys = args.Indexes
-		}
+		sortedSet.Keys = fallback.Indexes
 
 		errZAdd := sortedSet.Add(1 * time.Hour)
 		if errZAdd != nil {
 			return errZAdd
+		}
+
+		pipe := rdb.Pipeline()
+		pipe.ZAddArgs(ctx, args.Intersection, redis.ZAddArgs{
+			GT:      true,
+			Members: sortedSet.Collection,
+		})
+		pipe.Expire(ctx, args.Intersection, 1*time.Hour)
+		if cmds, errExec := pipe.Exec(ctx); errExec != nil {
+			for _, cmd := range cmds {
+				log.Printf("cmd: %v | args: %v | err: %v", cmd.FullName(), cmd.Args(), cmd.Err())
+			}
+			return errExec
 		}
 
 		errHSet := hash.Add(1 * time.Hour)
@@ -80,12 +87,12 @@ func (ca *CacheAside) GetCache(args CacheArgs, dest *[]map[string]any) error {
 			return errHSet
 		}
 
+		log.Printf("Indexes return from fallback [%v] ... \n", fallback.Indexes)
 		*dest = fallback.Data
+		log.Printf("Send fallback data for [%v] ... \n", args.Intersection)
 
 		return nil
 	}
-
-	// should have a fallback here
 
 	for _, key := range vacancyKeys {
 		hash, errHash := rdb.HGetAll(ctx, key).Result()

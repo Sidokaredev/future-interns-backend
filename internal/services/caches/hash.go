@@ -76,7 +76,7 @@ func ExtractToHash(keyPropName string, data any) HashCollection {
 
 	// SLICE
 	if dataType.Kind() == reflect.Slice {
-		log.Println("ON SLICE")
+		log.Println("Extract [slice] to Hash ...")
 		for i := 0; i < dataType.Len(); i++ {
 			element := dataType.Index(i).Interface()
 
@@ -110,8 +110,8 @@ func ExtractToHash(keyPropName string, data any) HashCollection {
 
 	// STRUCT
 	if dataType.Kind() == reflect.Struct {
+		log.Println("Extract [struct] to Hash ...")
 		structValue := dataType.Interface()
-		log.Println("ON STRUCT")
 
 		redis_hash := &Hash{}
 
@@ -122,7 +122,7 @@ func ExtractToHash(keyPropName string, data any) HashCollection {
 
 	// MAP
 	if dataType.Kind() == reflect.Map {
-		log.Println("ON MAP")
+		log.Println("Extract [map] to Hash ...")
 		mapValue := dataType.Interface()
 
 		redis_hash := &Hash{}

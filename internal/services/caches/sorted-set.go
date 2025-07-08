@@ -2,7 +2,6 @@ package caches
 
 import (
 	"context"
-	"fmt"
 	initializer "go-cache-aside-service/init"
 	"log"
 	"time"
@@ -70,13 +69,13 @@ func (ss *SortedSetCollection) Add(ttl time.Duration) error {
 
 	ctx := context.Background()
 	pipe := rdb.Pipeline()
-	interstoreKey := ""
-	for index, key := range ss.Keys {
-		if index == (len(ss.Keys) - 1) {
-			interstoreKey += fmt.Sprintf("%v", key)
-		} else {
-			interstoreKey += fmt.Sprintf("%v:", key)
-		}
+	// interstoreKey := ""
+	for _, key := range ss.Keys {
+		// if index == (len(ss.Keys) - 1) {
+		// 	interstoreKey += fmt.Sprintf("%v", key)
+		// } else {
+		// 	interstoreKey += fmt.Sprintf("%v:", key)
+		// }
 
 		pipe.ZAddArgs(ctx, key, redis.ZAddArgs{
 			GT:      true,
@@ -88,14 +87,14 @@ func (ss *SortedSetCollection) Add(ttl time.Duration) error {
 		}
 	}
 
-	pipe.ZInterStore(ctx, interstoreKey, &redis.ZStore{
-		Keys:      ss.Keys,
-		Aggregate: "MAX",
-	})
+	// pipe.ZInterStore(ctx, interstoreKey, &redis.ZStore{
+	// 	Keys:      ss.Keys,
+	// 	Aggregate: "MAX",
+	// })
 
-	if ttl.Nanoseconds() != 0 {
-		pipe.Expire(ctx, interstoreKey, ttl)
-	}
+	// if ttl.Nanoseconds() != 0 {
+	// 	pipe.Expire(ctx, interstoreKey, ttl)
+	// }
 
 	if cmds, errExec := pipe.Exec(ctx); errExec != nil {
 		for _, cmd := range cmds {

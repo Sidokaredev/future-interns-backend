@@ -616,15 +616,19 @@ func VacanciesWithCacheAside(gctx *gin.Context) {
 	offset := (limit * page) - limit
 
 	searchQueriesWilcards := []string{
-		fmt.Sprintf("%%%s%%", strings.TrimSpace(gctx.Query("keyword"))),
-		fmt.Sprintf("%%%s%%", strings.TrimSpace(gctx.Query("location"))),
+		fmt.Sprintf("%%%s%%", strings.TrimSpace(strings.ToLower(gctx.Query("keyword")))),  // -> keyword harus berupa string LowerCase
+		fmt.Sprintf("%%%s%%", strings.TrimSpace(strings.ToLower(gctx.Query("location")))), // -> location harus berupa string LowerCase
 		fmt.Sprintf("%%%s%%", strings.TrimSpace(gctx.Query("lineIndustry"))),
 		fmt.Sprintf("%%%s%%", strings.TrimSpace(gctx.Query("employeeType"))),
 	}
 
 	queryValues := []string{}
 	re := regexp.MustCompile("%(.+?)%") // mengambil search query parameter yang hanya memiliki nilai [%SEARCH%]
-	for _, val := range searchQueriesWilcards {
+	for i, val := range searchQueriesWilcards {
+		if i == 0 && val == "%%" {
+			queryValues = append(queryValues, "no-keyword") // -> jika keyword kosong, maka 'no-keyword'
+		}
+
 		if val != "%%" {
 			captured := re.FindAllStringSubmatch(val, -1)
 			queryValues = append(queryValues, captured[0][(len(captured[0])-1)])
@@ -637,11 +641,8 @@ func VacanciesWithCacheAside(gctx *gin.Context) {
 			intersectionKey += fmt.Sprintf("%v", val)
 			continue
 		}
-
 		intersectionKey += fmt.Sprintf("%v:", val)
 	}
-
-	cacheQuery := gctx.Query("cache")
 
 	var scoreMax string
 	tmScore, errParse := time.Parse(time.RFC3339, gctx.Query("time")) // mengambil nilai [time] sebagai UnixNano untuk Redis dan RFC3339 untuk MS SQL Server
@@ -736,14 +737,25 @@ func VacanciesWithCacheAside(gctx *gin.Context) {
 		}
 
 		// -> harus mendata indexes nya [line_industry, employee_type]
-		indexes := map[string]any{}
+		indexesCheck := map[string]bool{}
+		indexes := []string{}
+
+		if args.Keyword == "%%" { // -> cek nilai keyword
+			indexes = append(indexes, "no-keyword")
+		}
 
 		for _, vacancy := range vacancies {
-			if indexes["line_industry"] == nil {
-				indexes["line_industry"] = vacancy["line_industry"]
+			if !indexesCheck[vacancy["line_industry"].(string)] {
+				indexesCheck[vacancy["line_industry"].(string)] = true
+				indexes = append(indexes, vacancy["line_industry"].(string))
 			}
-			if indexes["employee_type"] == nil {
-				indexes["employee_type"] = vacancy["employee_type"]
+			if !indexesCheck[vacancy["employee_type"].(string)] {
+				indexesCheck[vacancy["employee_type"].(string)] = true
+				indexes = append(indexes, vacancy["employee_type"].(string))
+			}
+			if !indexesCheck[vacancy["location"].(string)] {
+				indexesCheck[vacancy["location"].(string)] = true
+				indexes = append(indexes, vacancy["location"].(string))
 			}
 
 			employer := map[string]any{}
@@ -755,11 +767,8 @@ func VacanciesWithCacheAside(gctx *gin.Context) {
 		}
 
 		return &caches.FallbackReturn{
-			Data: vacancies,
-			Indexes: []string{
-				indexes["line_industry"].(string),
-				indexes["employee_type"].(string),
-			},
+			Data:    vacancies,
+			Indexes: indexes,
 		}, nil
 	}
 
@@ -784,7 +793,7 @@ func VacanciesWithCacheAside(gctx *gin.Context) {
 		Count:        int64(limit),
 		Offset:       int64(offset),
 		Indexes:      queryValues,
-		CacheArgs: caches.CacheProps{
+		CacheProps: caches.CacheProps{
 			KeyPropName:    "id",
 			ScorePropName:  "created_at",
 			ScoreType:      "time.Time",
@@ -796,7 +805,7 @@ func VacanciesWithCacheAside(gctx *gin.Context) {
 		gctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   errCache.Error(),
-			"message": fmt.Sprintf("Gagal melakukan cache dengan pola [:%v]", cacheQuery),
+			"message": "Gagal melakukan cache dengan pola [cache-aside]",
 		})
 
 		return
