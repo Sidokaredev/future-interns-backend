@@ -469,3 +469,8 @@ func ReadFromDatabase(gormDB *gorm.DB, queryParams ...interface{}) ([]ReadVacanc
 
 	return vacancies, nil
 }
+
+// public
+func PipelinesWithWriteThrough(gctx *gin.Context) {
+
+}
