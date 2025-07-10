@@ -1002,7 +1002,6 @@ func VacanciesWithReadThrough(gctx *gin.Context) {
 			intersectionKey += fmt.Sprintf("%v", val)
 			continue
 		}
-
 		intersectionKey += fmt.Sprintf("%v:", val)
 	}
 
@@ -1015,24 +1014,112 @@ func VacanciesWithReadThrough(gctx *gin.Context) {
 		scoreMax = strconv.Itoa(int(tmScore.UnixNano()))
 	}
 
+	// -> Fallback Args for Cache
+	var fallbackArgs caches.FallbackArgs = caches.FallbackArgs{
+		VacanciesArgs: vacancies.VacanciesArgs{
+			Time:         tmScore.Format(time.RFC3339),
+			Keyword:      searchQueriesWilcards[0],
+			Location:     searchQueriesWilcards[1],
+			LineIndustry: searchQueriesWilcards[2],
+			EmployeeType: searchQueriesWilcards[3],
+		},
+		Offset:    offset,
+		FetchNext: limit,
+	}
+
+	// -> mengambil total vacancies dan candidateID
 	var count int64
-	var applied []string
-	errCountApplied := vacancies.CountAndApplied(userID, vacancies.VacanciesArgs{ // mengambil jumlah data berdasarkan search query parameter dan ID lowongan pekerjaan yang telah di apply (hanya kandidat)
-		Time:         tmScore.Format(time.RFC3339),
-		Keyword:      searchQueriesWilcards[0],
-		Location:     searchQueriesWilcards[1],
-		LineIndustry: searchQueriesWilcards[2],
-		EmployeeType: searchQueriesWilcards[3],
-	}, &count, &applied)
-	if errCountApplied != nil {
+	var candidateID string
+	errCount := vacancies.CountAndCandidateID(userID, fallbackArgs.VacanciesArgs, &count, &candidateID)
+	if errCount != nil {
 		gctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   errCountApplied.Error(),
-			"message": "Gagal melakukan query [count, applied]",
+			"error":   errCount.Error(),
+			"message": "Gagal mendapatkan data candidate dan total lowongan pekerjaan",
 		})
 		return
 	}
 
+	// -> fallback func untuk data pipelines/applied
+	var appliedFallbackFunc caches.FallbackCall = func(args caches.FallbackArgs) (*caches.FallbackReturn, error) {
+		DB, errDB := initializer.GetMssqlDB()
+		if errDB != nil {
+			return nil, errDB
+		}
+
+		var candidateID string
+		var applied []map[string]any
+		var indexes []string
+
+		errPipelines := DB.Transaction(func(tx *gorm.DB) error {
+			if userID == "" {
+				applied = []map[string]any{}
+				indexes = []string{}
+				return nil
+			}
+
+			fetchCandidate := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", userID).First(&candidateID)
+			if fetchCandidate.Error != nil {
+				return fetchCandidate.Error
+			}
+			indexes = append(indexes, fmt.Sprintf("pipelines:%v", candidateID))
+
+			errApplied := tx.Model(&models.Pipeline{}).Select([]string{
+				"id",
+				"stage",
+				"status",
+				"candidate_id",
+				"vacancy_id",
+				"created_at",
+			}).Where("candidate_id = ?", candidateID).Find(&applied).Error
+			if errApplied != nil {
+				return errApplied
+			}
+			return nil
+		})
+		if errPipelines != nil {
+			return nil, errPipelines
+		}
+
+		return &caches.FallbackReturn{
+			Data:    applied,
+			Indexes: indexes,
+		}, nil
+	}
+	rt_applied := caches.NewReadThrough(appliedFallbackFunc, fallbackArgs)
+
+	var applied []map[string]any // -> harus diubah/transform menjadi []string yang hanya berisi 'vacancy_id'
+	errApplied_rt := rt_applied.GetCache(caches.CacheArgs{
+		Intersection: fmt.Sprintf("pipelines:%v", candidateID),
+		Min:          "-inf",
+		Max:          scoreMax,
+		Indexes: []string{
+			fmt.Sprintf("pipelines:%v", candidateID),
+		},
+		CacheProps: caches.CacheProps{
+			KeyPropName:    "id",
+			ScorePropName:  "created_at",
+			ScoreType:      "time.Time",
+			MemberPropName: "id",
+		},
+	}, &applied)
+	if errApplied_rt != nil {
+		gctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errApplied_rt.Error(),
+			"message": "Gagal melakukan cache data [pipelines] dengan pola [read-through]",
+		})
+		return
+	}
+	sliceApplied := []string{}
+	for _, element := range applied {
+		stringID, ok := element["id"].(string)
+		if ok {
+			sliceApplied = append(sliceApplied, stringID)
+		}
+	}
+
+	// -> fallback func untuk data vacancies
 	var fallbackFunc caches.FallbackCall = func(args caches.FallbackArgs) (*caches.FallbackReturn, error) {
 		var vacancies []map[string]any
 		DB, _ := initializer.GetMssqlDB()
@@ -1133,22 +1220,10 @@ func VacanciesWithReadThrough(gctx *gin.Context) {
 			Indexes: indexes,
 		}, nil
 	}
-
-	// membuat instance cache berdasarkan pola [cache-aside, read-through] :!READ ONLY
-	rt := caches.NewReadThrough(fallbackFunc, caches.FallbackArgs{
-		VacanciesArgs: vacancies.VacanciesArgs{
-			Time:         tmScore.Format(time.RFC3339),
-			Keyword:      searchQueriesWilcards[0], // -> jika empty string [""], maka buat sorted-set 'no-keyword'
-			Location:     searchQueriesWilcards[1],
-			LineIndustry: searchQueriesWilcards[2],
-			EmployeeType: searchQueriesWilcards[3],
-		},
-		Offset:    offset,
-		FetchNext: limit,
-	})
+	rt_vacancies := caches.NewReadThrough(fallbackFunc, fallbackArgs)
 
 	var vacancies []map[string]any
-	errCache := rt.GetCache(caches.CacheArgs{ // mengambil nilai data yang ada pada cache, dan menjalankan FallbackCall jika cache kosong
+	errCache := rt_vacancies.GetCache(caches.CacheArgs{
 		Intersection: intersectionKey,
 		Min:          "-inf",
 		Max:          scoreMax,
@@ -1162,7 +1237,6 @@ func VacanciesWithReadThrough(gctx *gin.Context) {
 			MemberPropName: "id",
 		},
 	}, &vacancies)
-
 	if errCache != nil {
 		gctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -1189,7 +1263,7 @@ func VacanciesWithReadThrough(gctx *gin.Context) {
 		"success": true,
 		"data": gin.H{
 			"count":     count,
-			"applied":   applied,
+			"applied":   sliceApplied,
 			"vacancies": vacancies,
 			"last_time": last_time, // validate if len == 0
 		},
