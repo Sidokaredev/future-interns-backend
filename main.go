@@ -4,7 +4,7 @@ import (
 	initializer "go-write-behind-service/init"
 	"go-write-behind-service/internal/middlewares"
 	"go-write-behind-service/internal/routes"
-	"go-write-behind-service/internal/scheduler"
+	service_schedulers "go-write-behind-service/internal/services/scheduler"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,8 +23,10 @@ func main() {
 		panic(errRedis)
 	}
 
-	go scheduler.StartWriterJob(2 * time.Minute)
-	go scheduler.StartUpdaterJob(4 * time.Minute)
+	go service_schedulers.RunPipelinesScheduler(30 * time.Minute)
+
+	// go scheduler.StartWriterJob(2 * time.Minute)  // -> job writer
+	// go scheduler.StartUpdaterJob(4 * time.Minute) // -> job updater
 
 	gin.SetMode(gin.ReleaseMode)
 
