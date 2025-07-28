@@ -22,30 +22,6 @@ type Hash struct {
 	FieldValues []any    `json:"fields_values"`
 }
 
-// ::: -> Hash
-func (h *Hash) GetFieldsTTL() {
-
-}
-
-func (h *Hash) GetHashMap() map[string]string {
-	rdb, err := initializer.GetRedisDB()
-	if err != nil {
-		panic(err.Error())
-	}
-
-	rdbCtx := context.Background()
-	hmap, err := rdb.HGetAll(rdbCtx, fmt.Sprintf("%v", h.Key)).Result()
-	if err != nil {
-		panic(err.Error())
-	}
-
-	return hmap
-}
-
-func (h *Hash) SetHExpire(ttl time.Duration) {
-
-}
-
 // ::: -> Hash Collection
 func (hc *HashCollection) Add(ttl time.Duration) error {
 	rdb, err := initializer.GetRedisDB()

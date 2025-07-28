@@ -106,6 +106,26 @@ func (ca *CacheAside) GetCache(args CacheArgs, dest *[]map[string]any) error {
 	return nil
 }
 
+// func (ca *CacheAside) GetHash(key string, dest *map[string]string) error {
+// 	rdb, err := initializer.GetRedisDB()
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	ctx := context.Background()
+// 	hash, errHash := rdb.HGetAll(ctx, key).Result()
+// 	if errHash != nil {
+// 		return errHash
+// 	}
+
+// 	if len(hash) == 0 {
+// 		fallback, errFallback := ca.Fallback(ca.FallbackArgs)
+// 	}
+
+// 	*dest = hash
+// 	return nil
+// }
+
 func TransformNestedMap(flatMap map[string]string) map[string]any {
 	nestedMap := make(map[string]any)
 

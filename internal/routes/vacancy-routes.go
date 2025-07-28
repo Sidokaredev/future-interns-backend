@@ -18,6 +18,7 @@ func VacancyRoutes(apiv1 *gin.RouterGroup) {
 			})
 		})
 		public.Handle("GET", "/public/vacancies", handlers.VacanciesWithCacheAside)
+		public.Handle("GET", "/public/vacancies/:id", handlers.VacanciesByIdWithCacheAside)
 	}
 
 	handler := &handlers.VacancyHandler{}
