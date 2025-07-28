@@ -57,7 +57,7 @@ func PublicIdentityCheck() gin.HandlerFunc {
 		}
 
 		ctx.Set("authenticated", authenticated) // bool
-		ctx.Set("identity-access", identity)    // map[string]any - keys -> [name, type]
+		ctx.Set("identity", identity["type"])   // map[string]any - keys -> [name, type]
 		ctx.Set("permissions", permissions)     // []string
 		ctx.Set("token", bearerToken)           // string
 		ctx.Set("user-id", userID)              // string

@@ -953,6 +953,7 @@ func ReadFromDatabase(gormDB *gorm.DB, queryParams ...interface{}) ([]VacancyPro
 // public
 func VacanciesWithReadThrough(gctx *gin.Context) {
 	// middleware -> public-identity-check
+	identity := gctx.GetString("identity")
 	authenticated := gctx.GetBool("authenticated")
 	userID := gctx.GetString("user-id")
 
@@ -1030,7 +1031,7 @@ func VacanciesWithReadThrough(gctx *gin.Context) {
 	// -> mengambil total vacancies dan candidateID
 	var count int64
 	var candidateID string
-	errCount := vacancies.CountAndCandidateID(userID, fallbackArgs.VacanciesArgs, &count, &candidateID)
+	errCount := vacancies.CountAndCandidateID(userID, identity, fallbackArgs.VacanciesArgs, &count, &candidateID)
 	if errCount != nil {
 		gctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -1052,7 +1053,8 @@ func VacanciesWithReadThrough(gctx *gin.Context) {
 		var indexes []string
 
 		errPipelines := DB.Transaction(func(tx *gorm.DB) error {
-			if userID == "" {
+			log.Printf("user id: %v | identity: %v \n", userID, identity)
+			if userID == "" || identity != "candidate" {
 				applied = []map[string]any{}
 				indexes = []string{}
 				return nil
@@ -1113,7 +1115,7 @@ func VacanciesWithReadThrough(gctx *gin.Context) {
 	}
 	sliceApplied := []string{}
 	for _, element := range applied {
-		stringID, ok := element["id"].(string)
+		stringID, ok := element["vacancy_id"].(string)
 		if ok {
 			sliceApplied = append(sliceApplied, stringID)
 		}
@@ -1266,6 +1268,248 @@ func VacanciesWithReadThrough(gctx *gin.Context) {
 			"applied":   sliceApplied,
 			"vacancies": vacancies,
 			"last_time": last_time, // validate if len == 0
+		},
+	})
+}
+
+func VacanciesByIdWithReadThrough(gctx *gin.Context) {
+	authenticated := gctx.GetBool("authenticated")
+	identity := gctx.GetString("identity")
+	userID := gctx.GetString("user-id")
+
+	vacancyID := gctx.Param("id")
+	if vacancyID == "" {
+		gctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "parameter :id untuk vacancy_id tidak tersedia",
+			"message": "Periksa kembali dan pastikan nilai parameter :id untuk vacancy_id",
+		})
+		return
+	}
+
+	DB, errDB := initializer.GetMssqlDB()
+	if errDB != nil {
+		gctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errDB.Error(),
+			"message": "Gagal memanggil GORM Instance connection",
+		})
+		return
+	}
+
+	ctx := context.Background()
+	rdb, err := initializer.GetRedisDB()
+	if err != nil {
+		gctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+			"message": "Gagal memanggil koneksi Redis Server",
+		})
+		return
+	}
+
+	applied := []string{}
+	var vacancy map[string]any
+
+	if authenticated && identity == "candidate" {
+		var candidateID string
+		errCandidate := DB.Model(&models.Candidate{}).Select("id").Where("user_id = ?", userID).First(&candidateID).Error
+		if errCandidate != nil {
+			gctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   errCandidate.Error(),
+				"message": "Data pengguna sebagai kandidat tidak ditemukan",
+			})
+			return
+		}
+
+		log.Println("Looking for cached pipelines ...")
+		key := fmt.Sprintf("pipelines:%v", candidateID)
+		find_pipelines, errFind := rdb.ZRevRangeByScore(ctx, key, &redis.ZRangeBy{
+			Min: "-inf",
+			Max: "+inf",
+		}).Result()
+		if errFind != nil {
+			gctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   errFind.Error(),
+				"message": fmt.Sprintf("Gagal menjalankan Redis ZREVRANGEBYSCORE untuk key [%v]", key),
+			})
+			return
+		}
+
+		if len(find_pipelines) == 0 {
+			log.Println("Falling back pipelines from database ...")
+
+			pipelinesFromDB := []map[string]any{}
+			errPipelineFromDB := DB.Model(&models.Pipeline{}).Select([]string{
+				"id",
+				"stage",
+				"status",
+				"candidate_id",
+				"vacancy_id",
+				"created_at",
+			}).Where("candidate_id = ?", candidateID).Find(&pipelinesFromDB).Error
+			if errPipelineFromDB != nil {
+				gctx.JSON(http.StatusInternalServerError, gin.H{
+					"success": false,
+					"error":   errPipelineFromDB.Error(),
+					"message": "Gagal menjalankan query data Pipelines",
+				})
+				return
+			}
+
+			if len(pipelinesFromDB) > 0 {
+				hash := caches.ExtractToHash("id", pipelinesFromDB)
+				sortedSet := caches.NewSortedSetCollection(hash, caches.SortedSetArgs{
+					ScorePropName:  "created_at",
+					ScoreType:      "time.Time",
+					MemberPropName: "id",
+				})
+				sortedSet.Keys = []string{
+					key,
+				}
+				errZAdd := sortedSet.Add(1 * time.Hour)
+				if errZAdd != nil {
+					gctx.JSON(http.StatusInternalServerError, gin.H{
+						"success": false,
+						"error":   errZAdd.Error(),
+						"message": "Gagal menjalankan Redis ZADD data pipelines",
+					})
+					return
+				}
+				errHSet := hash.Add(1 * time.Hour)
+				if errHSet != nil {
+					gctx.JSON(http.StatusInternalServerError, gin.H{
+						"success": false,
+						"error":   errHSet.Error(),
+						"message": "Gagal menjalankan Redis HSET data Pipelines",
+					})
+					return
+				}
+
+				log.Println("Looking for new cached pipelines ...")
+				new_cache_pipelines, errNewPipelines := rdb.ZRevRangeByScore(ctx, key, &redis.ZRangeBy{
+					Min: "-inf",
+					Max: "+inf",
+				}).Result()
+				if errNewPipelines != nil {
+					gctx.JSON(http.StatusInternalServerError, gin.H{
+						"success": false,
+						"error":   errNewPipelines.Error(),
+						"message": fmt.Sprintf("Gagal menjalankan Redis ZREVRANGEBYSCORE untuk key [%v]", key),
+					})
+					return
+				}
+
+				cached_pipelines := []map[string]string{}
+				for _, id := range new_cache_pipelines {
+					hash, errHGetAll := rdb.HGetAll(ctx, id).Result()
+					if errHGetAll != nil {
+						gctx.JSON(http.StatusInternalServerError, gin.H{
+							"success": false,
+							"error":   errHGetAll.Error(),
+							"message": fmt.Sprintf("Gagal menjalankan Redis HGETALL untuk key [%v]", id),
+						})
+						return
+					}
+					cached_pipelines = append(cached_pipelines, hash)
+				}
+
+				for _, element := range cached_pipelines {
+					applied = append(applied, element["vacancy_id"])
+				}
+			}
+		} else {
+			cached_pipelines := []map[string]string{}
+			for _, id := range find_pipelines {
+				hash, errHGetAll := rdb.HGetAll(ctx, id).Result()
+				if errHGetAll != nil {
+					gctx.JSON(http.StatusInternalServerError, gin.H{
+						"success": false,
+						"error":   errHGetAll.Error(),
+						"message": fmt.Sprintf("Gagal menjalankan Redis HGETALL untuk key [%v]", id),
+					})
+					return
+				}
+				cached_pipelines = append(cached_pipelines, hash)
+			}
+
+			for _, element := range cached_pipelines {
+				applied = append(applied, element["vacancy_id"])
+			}
+		}
+	}
+
+	log.Println("Looking for cached vacancy ...")
+	cache_vacancy, errHash := rdb.HGetAll(ctx, vacancyID).Result()
+	if errHash != nil {
+		gctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errHash.Error(),
+			"message": fmt.Sprintf("Gagal mendapatkan cache Hash [%v]", vacancyID),
+		})
+		return
+	}
+
+	if len(cache_vacancy) == 0 {
+		log.Println("Falling back vacancy from database ...")
+
+		var new_vacancy map[string]any
+		errVacancy := vacancies.ById(vacancyID, &new_vacancy)
+		if errVacancy != nil {
+			gctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   errVacancy.Error(),
+				"message": "Gagal mendapatkan data vacancy berdasarkan ID",
+			})
+			return
+		}
+
+		employerKeys := []string{
+			"name",
+			"legal_name",
+			"location",
+			"profile_image_id",
+		}
+		employer := map[string]any{}
+		for _, key := range employerKeys {
+			employer[key] = new_vacancy[key]
+		}
+		helpers.TransformsIdToPath([]string{"profile_image_id"}, employer)
+		new_vacancy["employer"] = employer
+
+		hash := caches.ExtractToHash("id", new_vacancy)
+		errHSet := hash.Add(1 * time.Hour)
+		if errHSet != nil {
+			gctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   errHSet.Error(),
+				"message": "Gagal melakukan cache data pekerjaan",
+			})
+			return
+		}
+
+		new_cache_vacancy, errNewHash := rdb.HGetAll(ctx, vacancyID).Result()
+		if errNewHash != nil {
+			gctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   errNewHash.Error(),
+				"message": fmt.Sprintf("Gagal mendapatkan cache Hash [%v]", vacancyID),
+			})
+			return
+		}
+
+		vacancy = caches.TransformNestedMap(new_cache_vacancy)
+	} else {
+		vacancy = caches.TransformNestedMap(cache_vacancy)
+	}
+
+	gctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"applied": applied,
+			"vacancy": vacancy,
 		},
 	})
 }

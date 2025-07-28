@@ -18,6 +18,7 @@ func VacancyRoutes(apiv1 *gin.RouterGroup) {
 			})
 		})
 		public.Handle("GET", "/public/vacancies", handlers.VacanciesWithReadThrough)
+		public.Handle("GET", "/public/vacancies/:id", handlers.VacanciesByIdWithReadThrough)
 	}
 
 	handler := &handlers.VacancyHandler{}
