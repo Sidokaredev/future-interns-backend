@@ -23,7 +23,7 @@ func main() {
 		panic(errRedis)
 	}
 
-	go service_schedulers.RunPipelinesScheduler(30 * time.Minute)
+	go service_schedulers.RunPipelinesScheduler(2 * time.Minute)
 
 	// go scheduler.StartWriterJob(2 * time.Minute)  // -> job writer
 	// go scheduler.StartUpdaterJob(4 * time.Minute) // -> job updater
