@@ -16,6 +16,19 @@ import (
 )
 
 func PipelinesWithWriteThrough(gctx *gin.Context) {
+	// middleware:AuthorizationWithBearer
+	userID := gctx.GetString("user-id")
+	identity := gctx.GetString("identity")
+
+	if identity != "candidate" {
+		gctx.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"error":   "selain candidate tidak dizinkan untuk apply lowongan pekerjaan",
+			"message": "Hanya pengguna sebagai kandidat yang diizinkan untuk mengirimkan lamaran pekerjaan",
+		})
+		return
+	}
+
 	var body struct {
 		VacancyID string `json:"vacancy_id"`
 	}
@@ -27,9 +40,6 @@ func PipelinesWithWriteThrough(gctx *gin.Context) {
 		})
 		return
 	}
-
-	// middleware:AuthorizationWithBearer
-	userID := gctx.GetString("user-id")
 
 	DB, errDB := initializer.GetMssqlDB()
 	if errDB != nil {
@@ -107,7 +117,7 @@ func PipelinesWithWriteThrough(gctx *gin.Context) {
 	wt := caches.NewWriteThrough(executorFunc)
 	errSetCache := wt.SetCache(newPipeline, caches.CacheArgs{
 		Indexes: []string{
-			fmt.Sprintf("pipe:%s", candidateID),
+			fmt.Sprintf("pipelines:%s", candidateID),
 		},
 		CacheProps: caches.CacheProps{
 			KeyPropName:    "id",

@@ -108,10 +108,10 @@ func AuthorizationWithBearer() gin.HandlerFunc {
 			return
 		}
 
-		ctx.Set("authenticated", authenticated)            // -> bool
-		ctx.Set("identity-access", identityAccess["type"]) // -> string
-		ctx.Set("token", bearerToken)                      // -> string
-		ctx.Set("user-id", userID)                         // -> string
+		ctx.Set("authenticated", authenticated)     // -> bool
+		ctx.Set("identity", identityAccess["type"]) // -> string
+		ctx.Set("token", bearerToken)               // -> string
+		ctx.Set("user-id", userID)                  // -> string
 
 		ctx.Next()
 	}
