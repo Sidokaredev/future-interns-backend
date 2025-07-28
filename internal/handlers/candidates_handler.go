@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	initializer "future-interns-backend/init"
 	"future-interns-backend/internal/models"
+	"future-interns-backend/internal/services/helpers"
 	"log"
 	"net/http"
 	"reflect"
@@ -2626,90 +2628,146 @@ func (c *CandidatesHandler) CandidateSkillDeleteById(context *gin.Context) {
 
 /* PIPELINE */
 func (c *CandidatesHandler) CreatePipeline(ctx *gin.Context) {
-	identity, isIdentityExist := ctx.Get("identity-accesses")
-	if !isIdentityExist {
-		ctx.JSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"error":   "invalid account identity",
-			"message": "your account has no identity!",
-		})
+	// middleware:public_identity_access
+	userID := ctx.GetString("user-id")
+	identity := ctx.GetStringMap("identity-accesses")
 
-		ctx.Abort()
+	if identity["type"] == "" {
+		ctx.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"error":   "pengguna tidak memiliki [identity-access]",
+			"message": fmt.Sprintf("Identitas akun anda tidak bisa dikenali [%v]", identity),
+		})
 		return
 	}
-	if identity.(map[string]interface{})["type"] != "candidate" {
+	if identity["type"] != "candidate" {
 		ctx.JSON(http.StatusForbidden, gin.H{
 			"success": false,
-			"error":   fmt.Sprintf("as a %s you are not allowed to apply job", identity.(map[string]interface{})["type"]),
-			"message": "Only candidates are allowed to apply for this job. Other users are not permitted to proceed with the application.",
+			"error":   fmt.Sprintf("pengguna dengan identitas [%v] tidak diizinkan mengirimkan lamaran pekerjaan", identity),
+			"message": fmt.Sprintf("Hanya diizinkan ke pengguna dengan identitas [candidate] | identitas anda: [%v]", identity),
 		})
-
-		ctx.Abort()
 		return
 	}
-	request := struct {
-		VacancyId string `form:"vacancy_id" binding:"required"`
-	}{}
-	if errBind := ctx.ShouldBind(&request); errBind != nil {
+
+	var body struct {
+		VacancyId string `json:"vacancy_id" binding:"required"`
+	}
+	if errBind := ctx.ShouldBindJSON(&body); errBind != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   errBind.Error(),
-			"message": "double check your Form-Data fields, kids",
+			"message": "Periksa ulang form [vacancy_id]",
 		})
-
-		ctx.Abort()
 		return
 	}
 
-	ch_uuid := make(chan string, 1)
-	go GenUuid(request.VacancyId, ch_uuid)
-
-	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
-	claims := ParseJWT(bearerToken)
-
-	gormDB, _ := initializer.GetGorm()
-	errCreatePipeline := gormDB.Transaction(func(tx *gorm.DB) error {
-		candidate := map[string]interface{}{}
-		errGetCandidateId := tx.Model(&models.Candidate{}).
-			Select("id").
-			Where("user_id = ?", claims.Id).
-			First(&candidate).Error
-
-		if errGetCandidateId != nil {
-			return errGetCandidateId
-		}
-
-		m_pipeline := models.Pipeline{
-			Id:          <-ch_uuid,
-			CandidateId: candidate["id"].(string),
-			VacancyId:   request.VacancyId,
-			Stage:       "Screening",
-			Status:      "Applied",
-			CreatedAt:   time.Now(),
-			UpdatedAt:   nil,
-		}
-		errCreate := tx.Create(&m_pipeline).Error
-		if errCreate != nil {
-			return errCreate
-		}
-
-		return nil
-	})
-
-	if errCreatePipeline != nil {
+	var candidateID string
+	gormDB, errGorm := initializer.GetGorm()
+	if errGorm != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   errCreatePipeline.Error(),
-			"message": "failed creating pipeline",
+			"error":   errGorm.Error(),
+			"message": "Gagal memanggil GORM Instance",
 		})
-
-		ctx.Abort()
 		return
 	}
+
+	errCandidate := gormDB.Transaction(func(tx *gorm.DB) error {
+		errID := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", userID).First(&candidateID).Error
+		if errID != nil {
+			return errID
+		}
+		var pipelineExist int64
+		errPipeline := tx.Model(&models.Pipeline{}).Where("candidate_id = ? AND vacancy_id = ?", candidateID, body.VacancyId).Count(&pipelineExist).Error
+		if errPipeline != nil {
+			return errPipeline
+		}
+		if pipelineExist != 0 {
+			return errors.New("lamaran pekerjaan hanya dapat dilakukan sekali")
+		}
+		return nil
+	})
+	if errCandidate != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   errCandidate.Error(),
+			"message": "Tidak dapat menemukan data kandidat",
+		})
+		return
+	}
+
+	uuidPipeline := helpers.GenerateUUID(body.VacancyId)
+	newPipeline := map[string]any{
+		"id":           uuidPipeline,
+		"candidate_id": candidateID,
+		"vacancy_id":   body.VacancyId,
+		"stage":        "Screening",
+		"status":       "Applied",
+		"created_at":   time.Now(),
+	}
+
+	errPipeline := gormDB.Model(&models.Pipeline{}).Create(newPipeline).Error
+	if errPipeline != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errPipeline.Error(),
+			"message": "Gagal mengirimkan lamaran pekerjaan",
+		})
+		return
+	}
+	// fallbackFunc := func(params ...any) (*caching.FallbackReturnValues, error) {
+	// 	// paramsnya adalah map[string]any dari data Pipeline
+	// 	var pipelineID string
+	// 	if mapValue, ok := params[0].(map[string]any); ok {
+	// 		DB, err := initializer.GetGorm()
+	// 		if err != nil {
+	// 			return nil, err
+	// 		}
+
+	// 		errPipeline := DB.Model(&models.Pipeline{}).Create(mapValue).Error
+	// 		if errPipeline != nil {
+	// 			return nil, errPipeline
+	// 		}
+
+	// 		pipelineID = mapValue["id"].(string)
+	// 	}
+
+	// 	return &caching.FallbackReturnValues{
+	// 		Data: []map[string]any{
+	// 			{
+	// 				"id": pipelineID,
+	// 			},
+	// 		},
+	// 		Indexes: []string{"Pipeline"},
+	// 	}, nil
+	// }
+
+	// fallbackArgs := []any{}
+
+	// cache := caching.NewCacheStrategy(body.Cache, fallbackFunc, fallbackArgs)
+	// errSetCache := cache.SetCache(caching.SetCacheArgs{
+	// 	KeyPropName:    "id",
+	// 	ScorePropName:  "created_at",
+	// 	ScoreType:      "time.Time",
+	// 	MemberPropName: "id",
+	// 	Indexes:        []string{"Pipelines"},
+	// 	JobName:        "job:writer@pipeline", // Only for Write-Behind
+	// }, newPipeline)
+	// if errSetCache != nil {
+	// 	ctx.JSON(http.StatusInternalServerError, gin.H{
+	// 		"success": false,
+	// 		"error":   errSetCache.Error(),
+	// 		"message": "Gagal melakukan cache write-through pada data Pipeline",
+	// 	})
+	// 	return
+	// }
 
 	ctx.JSON(http.StatusCreated, gin.H{
 		"success": true,
-		"data":    "vacancy applied successfully",
+		"data": gin.H{
+			"pipeline_id": newPipeline["id"],
+			"message":     "Lamaran berhasil dikirimkan",
+		},
 	})
 }
 

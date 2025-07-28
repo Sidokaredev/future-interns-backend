@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -23,7 +24,7 @@ func NewCacheAside(fb FallbackCall, fbArgs []any) *CacheAside {
 	}
 }
 
-func (ca *CacheAside) SetCache(args SetCacheArgs, data []map[string]any) error {
+func (ca *CacheAside) SetCache(args SetCacheArgs, data any) error {
 	return nil
 }
 
@@ -67,12 +68,12 @@ func (ca *CacheAside) GetCache(args GetCacheArgs, dest *[]map[string]any) error 
 
 		sortedSet.Keys = args.Indexes
 
-		errZAdd := sortedSet.Add()
+		errZAdd := sortedSet.Add(1 * time.Hour)
 		if errZAdd != nil {
 			return errZAdd
 		}
 
-		errHSet := hash.Add()
+		errHSet := hash.Add(1 * time.Hour)
 		if errHSet != nil {
 			return errHSet
 		}

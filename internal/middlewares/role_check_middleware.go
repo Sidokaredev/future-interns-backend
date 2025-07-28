@@ -76,6 +76,7 @@ func RoleCheck() gin.HandlerFunc {
 
 		ctx.Set("identity-accesses", identityAccess)
 		ctx.Set("permissions", listOfPermissions)
+		ctx.Set("user-id", claims.Id) // NEW -> string -> userID
 		ctx.Next()
 	}
 }

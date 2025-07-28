@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	initializer "future-interns-backend/init"
+	"log"
 	"reflect"
 	"time"
 )
@@ -46,7 +47,7 @@ func (h *Hash) SetHExpire(ttl time.Duration) {
 }
 
 // ::: -> Hash Collection
-func (hc *HashCollection) Add() error {
+func (hc *HashCollection) Add(ttl time.Duration) error {
 	rdb, err := initializer.GetRedisDB()
 	if err != nil {
 		return err
@@ -56,7 +57,9 @@ func (hc *HashCollection) Add() error {
 	pipe := rdb.Pipeline()
 	for _, hash := range hc.Collection {
 		pipe.HSet(ctx, hash.Key, hash.FieldValues...)
-		pipe.HExpire(ctx, hash.Key, 1*time.Hour, hash.Fields...)
+		if ttl.Nanoseconds() != 0 {
+			pipe.HExpire(ctx, hash.Key, ttl, hash.Fields...)
+		}
 	}
 
 	if _, errExec := pipe.Exec(ctx); errExec != nil {
@@ -66,30 +69,74 @@ func (hc *HashCollection) Add() error {
 }
 
 // [:data] must be an Interface or Any
-func ExtractToHash(keyPropName string, data []map[string]any) HashCollection {
+func ExtractToHash(keyPropName string, data any) HashCollection {
 	var redis_hash_collection HashCollection
-	for _, element := range data {
-		redis_hash := &Hash{}
 
-		t := reflect.TypeOf(element)
-		v := reflect.ValueOf(element)
+	dataType := reflect.ValueOf(data)
 
-		if t.Kind() == reflect.Map {
-			mapKey := reflect.ValueOf(keyPropName)
-			val := v.MapIndex(mapKey)
+	// SLICE
+	if dataType.Kind() == reflect.Slice {
+		log.Println("ON SLICE")
+		for i := 0; i < dataType.Len(); i++ {
+			element := dataType.Index(i).Interface()
 
-			if !val.IsValid() {
-				panic("key prop name: invalid")
-			} else {
-				redis_hash.Key = fmt.Sprintf("%v", val.Interface())
+			redis_hash := &Hash{}
+
+			tElement := reflect.TypeOf(element)
+			vElement := reflect.ValueOf(element)
+
+			// SLICE -> MAP
+			if tElement.Kind() == reflect.Map {
+				mapKey := reflect.ValueOf(keyPropName)
+				val := vElement.MapIndex(mapKey)
+
+				if !val.IsValid() {
+					panic("key prop name: invalid")
+				} else {
+					redis_hash.Key = fmt.Sprintf("%v", val.Interface())
+				}
+
+				ExtractMapToHash(element, redis_hash)
 			}
 
-			ExtractMapToHash(element, redis_hash)
+			// SLICE -> STRUCT
+			if tElement.Kind() == reflect.Struct {
+				ExtractStructToHash(keyPropName, element, redis_hash)
+			}
+
+			redis_hash_collection.Collection = append(redis_hash_collection.Collection, *redis_hash)
+		}
+	}
+
+	// STRUCT
+	if dataType.Kind() == reflect.Struct {
+		structValue := dataType.Interface()
+		log.Println("ON STRUCT")
+
+		redis_hash := &Hash{}
+
+		ExtractStructToHash(keyPropName, structValue, redis_hash)
+
+		redis_hash_collection.Collection = append(redis_hash_collection.Collection, *redis_hash)
+	}
+
+	// MAP
+	if dataType.Kind() == reflect.Map {
+		log.Println("ON MAP")
+		mapValue := dataType.Interface()
+
+		redis_hash := &Hash{}
+
+		mapKey := reflect.ValueOf(keyPropName)
+		val := dataType.MapIndex(mapKey)
+
+		if !val.IsValid() {
+			panic("key prop name: invalid")
+		} else {
+			redis_hash.Key = fmt.Sprintf("%v", val.Interface())
 		}
 
-		if t.Kind() == reflect.Struct {
-			ExtractStructToHash(keyPropName, element, redis_hash)
-		}
+		ExtractMapToHash(mapValue, redis_hash)
 
 		redis_hash_collection.Collection = append(redis_hash_collection.Collection, *redis_hash)
 	}
@@ -98,6 +145,7 @@ func ExtractToHash(keyPropName string, data []map[string]any) HashCollection {
 	return redis_hash_collection
 }
 
+// :::Map Responsibility
 func ExtractMapToHash(data any, redis_hash *Hash) {
 	iter := reflect.ValueOf(data).MapRange()
 
@@ -115,7 +163,6 @@ func ExtractMapToHash(data any, redis_hash *Hash) {
 		redis_hash.FieldValues = append(redis_hash.FieldValues, key.Interface(), val.Interface())
 	}
 }
-
 func MapIterations(keyPrefix any, val any, redis_hash *Hash) {
 	iter := reflect.ValueOf(val).MapRange()
 
@@ -136,6 +183,7 @@ func MapIterations(keyPrefix any, val any, redis_hash *Hash) {
 	}
 }
 
+// :::Struct Responsibility
 func ExtractStructToHash(keyPropName string, data any, redis_hash *Hash) {
 	v := reflect.ValueOf(data)
 
@@ -166,7 +214,6 @@ func ExtractStructToHash(keyPropName string, data any, redis_hash *Hash) {
 		redis_hash.FieldValues = append(redis_hash.FieldValues, tag, v.Field(i).Interface())
 	}
 }
-
 func StructIterations(keyPrefix any, val any, redis_hash *Hash) {
 	v := reflect.ValueOf(val)
 

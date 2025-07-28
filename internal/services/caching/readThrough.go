@@ -5,6 +5,7 @@ import (
 	"fmt"
 	initializer "future-interns-backend/init"
 	"log"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -21,7 +22,7 @@ func NewReadThrough(fb FallbackCall, fbArgs []any) *ReadThrough {
 	}
 }
 
-func (rt *ReadThrough) SetCache(args SetCacheArgs, data []map[string]any) error {
+func (rt *ReadThrough) SetCache(args SetCacheArgs, data any) error {
 	return nil
 }
 
@@ -65,12 +66,12 @@ func (rt *ReadThrough) GetCache(args GetCacheArgs, dest *[]map[string]any) error
 
 		sortedSet.Keys = args.Indexes
 
-		errZAdd := sortedSet.Add()
+		errZAdd := sortedSet.Add(1 * time.Hour)
 		if errZAdd != nil {
 			return errZAdd
 		}
 
-		errHSet := hash.Add()
+		errHSet := hash.Add(1 * time.Hour)
 		if errHSet != nil {
 			return errHSet
 		}

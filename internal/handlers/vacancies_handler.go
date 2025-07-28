@@ -3,7 +3,6 @@ package handlers
 import (
 	"fmt"
 	initializer "future-interns-backend/init"
-	"regexp"
 	"time"
 
 	"future-interns-backend/internal/models"
@@ -90,19 +89,25 @@ func FallbackVacancies(queries ...any) (*caching.FallbackReturnValues, error) {
 	}, nil
 }
 
-func CountAndApplied(candidateID string, queries []any, count *int64, applied *[]string) error {
+func CountAndApplied(userID string, queries []any, count *int64, applied *[]string) error {
 	DB, err := initializer.GetGorm()
 	if err != nil {
 		return err
 	}
 
 	errTransacQuery := DB.Transaction(func(tx *gorm.DB) error {
-		if candidateID == "" {
+		if userID == "" {
 			applied = &[]string{}
 		} else {
-			fetchApplied := tx.Model(&models.Pipeline{}).Select("vacancy_id").Where("candidate_id = ?", candidateID).Find(applied)
-			if fetchApplied.Error != nil {
-				return fetchApplied.Error
+			var candidateID string
+			fetchCandidate := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", userID).First(&candidateID)
+			if fetchCandidate.Error != nil {
+				log.Printf("candidate id: %v", fetchCandidate.Error.Error())
+			} else {
+				fetchApplied := tx.Model(&models.Pipeline{}).Select("vacancy_id").Where("candidate_id = ?", candidateID).Find(applied)
+				if fetchApplied.Error != nil {
+					return fetchApplied.Error
+				}
 			}
 		}
 
@@ -136,7 +141,8 @@ func CountAndApplied(candidateID string, queries []any, count *int64, applied *[
 func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 	// middleware:public_identity_check
 	authenticated := ctx.GetBool("authenticated")
-	candidateID := ctx.GetString("candidate-id")
+	identity := ctx.GetString("identity-access")
+	userID := ctx.GetString("user-id")
 
 	page, errConvPage := strconv.Atoi(ctx.Query("page"))
 	if errConvPage != nil {
@@ -150,7 +156,7 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 	if !authenticated && (page > 1 || limit > 10) { // pengguna yang belum terauthentikasi hanya tidak bisa melihat lebih dari 10 data
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "invalid access token",
+			"error":   "pengguna tidak ter-autentikasi",
 			"message": "Masuk terlebih dahulu untuk melihat lebih banyak lowongan pekerjaan",
 		})
 		return
@@ -165,90 +171,128 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 		fmt.Sprintf("%%%s%%", strings.TrimSpace(ctx.Query("employeeType"))),
 	}
 
-	queryValues := []string{}
-	re := regexp.MustCompile("%(.+?)%") // mengambil search query parameter yang hanya memiliki nilai [%SEARCH%]
-	for _, val := range searchQueriesWilcards {
-		if val != "%%" {
-			captured := re.FindAllStringSubmatch(val, -1)
-			queryValues = append(queryValues, captured[0][(len(captured[0])-1)])
-		}
-	}
-
-	intersectionKey := "" // menyusun intersection untuk setiap search query parameter [Keyword:Location:LineIndustry:EmployeeType]
-	for index, val := range queryValues {
-		if index == (len(queryValues) - 1) {
-			intersectionKey += fmt.Sprintf("%v", val)
-			continue
-		}
-
-		intersectionKey += fmt.Sprintf("%v:", val)
-	}
-
-	cacheQuery := ctx.Query("cache")
-
-	var scoreMax string
 	tmScore, errParse := time.Parse(time.RFC3339, ctx.Query("time")) // mengambil nilai [time] sebagai UnixNano untuk Redis dan RFC3339 untuk MS SQL Server
 	if errParse != nil {
-		now := time.Now().UnixNano()
-		scoreMax = strconv.Itoa(int(now))
-	} else {
-		scoreMax = strconv.Itoa(int(tmScore.UnixNano()))
+		tmScore = time.Now()
 	}
 
-	// how if query("time") empty? tmScore?
+	DB, errDB := initializer.GetGorm()
+	if errDB != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errDB.Error(),
+			"message": "Gagal memanggil GORM Instance connection",
+		})
+		return
+	}
 
 	var count int64
 	var applied []string
-	errCountApplied := CountAndApplied(candidateID, []any{ // mengambil jumlah data berdasarkan search query parameter dan ID lowongan pekerjaan yang telah di apply (hanya kandidat)
-		tmScore.Format(time.RFC3339),
-		limit, offset,
-		searchQueriesWilcards[0],
-		searchQueriesWilcards[1],
-		searchQueriesWilcards[2],
-		searchQueriesWilcards[3],
-	}, &count, &applied)
-	if errCountApplied != nil {
+	var vacancies []map[string]any
+	errQuery := DB.Transaction(func(tx *gorm.DB) error {
+		if authenticated && identity == "candidate" {
+			var candidateID string
+			errCandidate := tx.Model(&models.Candidate{}).Select("id").Where("user_id = ?", userID).First(&candidateID).Error
+			if errCandidate != nil {
+				return errCandidate
+			}
+
+			errPipelines := tx.Model(&models.Pipeline{}).Select("vacancy_id").Where("candidate_id = ?", candidateID).Find(&applied).Error
+			if errPipelines != nil {
+				return errPipelines
+			}
+		} else {
+			applied = []string{}
+		}
+
+		stateQuery := tx.Model(&models.Vacancy{}).Select([]string{
+			"vacancies.id",
+			"vacancies.position",
+			"vacancies.description",
+			"vacancies.qualification",
+			"vacancies.responsibility",
+			"vacancies.line_industry",
+			"vacancies.employee_type",
+			"vacancies.min_experience",
+			"vacancies.salary",
+			"vacancies.work_arrangement",
+			"vacancies.sla",
+			"vacancies.is_inactive",
+			"vacancies.created_at",
+			"employers.name",
+			"employers.legal_name",
+			"employers.location",
+			"employers.profile_image_id",
+		}).
+			Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
+			Where(`vacancies.is_inactive = ? AND
+			vacancies.created_at <= ? AND
+			employers.location LIKE ? AND
+			(vacancies.position LIKE ? OR
+			vacancies.description LIKE ? OR
+			vacancies.qualification LIKE ? OR
+			vacancies.responsibility LIKE ?) AND
+			vacancies.line_industry LIKE ? AND
+			vacancies.employee_type LIKE ?`,
+				false,
+				tmScore.Format(time.RFC3339),
+				searchQueriesWilcards[1],
+				searchQueriesWilcards[0],
+				searchQueriesWilcards[0],
+				searchQueriesWilcards[0],
+				searchQueriesWilcards[0],
+				searchQueriesWilcards[2],
+				searchQueriesWilcards[3],
+			)
+
+		errCount := stateQuery.Count(&count).Error
+		if errCount != nil {
+			return errCount
+		}
+
+		errVacancies := stateQuery.Order("vacancies.created_at DESC").Limit(limit).Offset(offset).Find(&vacancies).Error
+		if errVacancies != nil {
+			return errVacancies
+		}
+
+		return nil
+	})
+
+	if errQuery != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   errCountApplied.Error(),
-			"message": "Gagal melakukan query [count, applied]",
+			"error":   errQuery.Error(),
+			"message": "Gagal mendapatkan data lowongan pekerjaan berdasarkan filter",
 		})
 		return
 	}
 
-	cache := caching.NewCacheStrategy(cacheQuery, FallbackVacancies, []any{ // membuat instance cache berdasarkan pola [cache-aside, read-through] :!READ ONLY
-		tmScore.Format(time.RFC3339),
-		limit, offset,
-		searchQueriesWilcards[0],
-		searchQueriesWilcards[1],
-		searchQueriesWilcards[2],
-		searchQueriesWilcards[3],
-	})
+	employerKeys := []string{
+		"name",
+		"legal_name",
+		"location",
+		"profile_image_id",
+	}
 
-	var vacancies []map[string]any
-	errCache := cache.GetCache(caching.GetCacheArgs{ // mengambil nilai data yang ada pada cache, dan menjalankan FallbackCall jika cache kosong
-		Intersection: intersectionKey,
-		Min:          "-inf",
-		Max:          scoreMax,
-		Count:        int64(limit),
-		Offset:       int64(offset),
-		Indexes:      queryValues,
-		CacheArgs: caching.CacheProps{
-			KeyPropName:    "id",
-			ScorePropName:  "created_at",
-			ScoreType:      "time.Time",
-			MemberPropName: "id",
-		},
-	}, &vacancies)
+	for _, vacancy := range vacancies {
+		employer := map[string]interface{}{}
+		for _, key := range employerKeys {
+			employer[key] = vacancy[key]
+		}
+		TransformsIdToPath([]string{"profile_image_id"}, employer)
+		vacancy["employer"] = employer
+	}
 
-	if errCache != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   errCache.Error(),
-			"message": fmt.Sprintf("Gagal melakukan cache dengan pola [:%v]", cacheQuery),
-		})
-
-		return
+	var last_time string
+	if len(vacancies) == 0 {
+		last_time = "Data pencarian telah ditampilkan secara kesluruhan"
+	} else {
+		timeParse, ok := vacancies[len(vacancies)-1]["created_at"].(time.Time)
+		if ok {
+			last_time = timeParse.Format(time.RFC3339)
+		} else {
+			last_time = vacancies[len(vacancies)-1]["created_at"].(string)
+		}
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
@@ -257,35 +301,39 @@ func (h *VacancyHandlers) GetVacancies(ctx *gin.Context) {
 			"count":     count,
 			"applied":   applied,
 			"vacancies": vacancies,
-			"last_time": vacancies[len(vacancies)-1]["created_at"], // validate if len == 0
+			"last_time": last_time, // validate if len == 0
 		},
 	})
 }
 
 func (h *VacancyHandlers) GetVacancyDetail(ctx *gin.Context) {
-	authenticated, _ := ctx.Get("authenticated")
-	identity, _ := ctx.Get("identity-access")
-	// permissions, _ := ctx.Get("permissions")
+	authenticated := ctx.GetBool("authenticated")
+	identity := ctx.GetString("identity-access")
+	userID := ctx.GetString("user-id")
 
 	vacancyID := ctx.Param("id")
 	if vacancyID == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "missing id param for Vacancy ID",
-			"message": "please specify :id param for Vacancy ID",
+			"error":   "parameter :id untuk vacancy_id tidak tersedia",
+			"message": "Periksa kembali dan pastikan nilai parameter :id untuk vacancy_id",
 		})
-
-		ctx.Abort()
 		return
 	}
 
-	bearerToken := strings.TrimPrefix(ctx.GetHeader("Authorization"), "Bearer ")
-
-	gormDB, _ := initializer.GetGorm()
-	vacancy := map[string]interface{}{}
-	applied := false
-	errGetVacancy := gormDB.Transaction(func(tx *gorm.DB) error {
-		errGet := tx.Model(&models.Vacancy{}).Select([]string{
+	DB, errDB := initializer.GetGorm()
+	if errDB != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   errDB.Error(),
+			"message": "Gagal memanggil GORM Instance connection",
+		})
+		return
+	}
+	vacancy := map[string]any{}
+	var applied []string
+	errQuery := DB.Transaction(func(tx *gorm.DB) error {
+		errVacancy := tx.Model(&models.Vacancy{}).Select([]string{
 			"vacancies.id",
 			"vacancies.position",
 			"vacancies.description",
@@ -306,40 +354,40 @@ func (h *VacancyHandlers) GetVacancyDetail(ctx *gin.Context) {
 		}).Joins("INNER JOIN employers ON employers.id = vacancies.employer_id").
 			Where("vacancies.is_inactive = ? AND vacancies.id = ?", false, vacancyID).
 			First(&vacancy).Error
-
-		if errGet != nil {
-			return errGet
+		if errVacancy != nil {
+			return errVacancy
 		}
 
-		if authenticated.(bool) && identity.(string) == "candidate" {
-			claims := ParseJWT(bearerToken)
-
+		if authenticated && identity == "candidate" {
 			var candidateID string
 			errGetCandidateID := tx.Model(&models.Candidate{}).
 				Select("id").
-				Where("user_id = ?", claims.Id).
+				Where("user_id = ?", userID).
 				First(&candidateID).Error
 			if errGetCandidateID != nil {
 				return errGetCandidateID
 			}
 
-			errAppliedCheck := tx.Model(&models.Pipeline{}).Select("1").Where("candidate_id = ? AND vacancy_id = ?", candidateID, vacancyID).First(&applied).Error
+			errAppliedCheck := tx.Model(&models.Pipeline{}).
+				Select("vacancy_id").
+				Where("candidate_id = ?", candidateID).
+				Find(&applied).Error
 			if errAppliedCheck != nil {
 				log.Println(errAppliedCheck.Error())
 			}
+		} else {
+			applied = []string{}
 		}
 
 		return nil
 	})
 
-	if errGetVacancy != nil {
+	if errQuery != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   errGetVacancy.Error(),
-			"message": "this could be data not found in database",
+			"error":   errQuery.Error(),
+			"message": "Gagal melakukan query untuk data pipelines dan vacancy",
 		})
-
-		ctx.Abort()
 		return
 	}
 
@@ -350,7 +398,7 @@ func (h *VacancyHandlers) GetVacancyDetail(ctx *gin.Context) {
 		"profile_image_id",
 	}
 
-	employer := map[string]interface{}{}
+	employer := map[string]any{}
 	for _, key := range employerKeys {
 		employer[key] = vacancy[key]
 		delete(vacancy, key)
@@ -361,8 +409,8 @@ func (h *VacancyHandlers) GetVacancyDetail(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"vacancy": vacancy,
 			"applied": applied,
+			"vacancy": vacancy,
 		},
 	})
 }

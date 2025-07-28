@@ -62,7 +62,7 @@ func NewSortedSetCollection(Hash HashCollection, args SortedSetArgs) *SortedSetC
 /*
 set Collection(redis.Z) as members on every Keys
 */
-func (ss *SortedSetCollection) Add() error {
+func (ss *SortedSetCollection) Add(ttl time.Duration) error {
 	rdb, err := initializer.GetRedisDB()
 	if err != nil {
 		return err
@@ -83,7 +83,9 @@ func (ss *SortedSetCollection) Add() error {
 			Members: ss.Collection,
 		})
 
-		pipe.Expire(ctx, key, 1*time.Hour)
+		if ttl.Nanoseconds() != 0 {
+			pipe.Expire(ctx, key, ttl)
+		}
 	}
 
 	pipe.ZInterStore(ctx, interstoreKey, &redis.ZStore{
@@ -91,7 +93,9 @@ func (ss *SortedSetCollection) Add() error {
 		Aggregate: "MAX",
 	})
 
-	pipe.Expire(ctx, interstoreKey, 1*time.Hour)
+	if ttl.Nanoseconds() != 0 {
+		pipe.Expire(ctx, interstoreKey, ttl)
+	}
 
 	if cmds, errExec := pipe.Exec(ctx); errExec != nil {
 		for _, cmd := range cmds {

@@ -1,7 +1,8 @@
 package caching
 
 type ICacheStrategy interface {
-	SetCache(args SetCacheArgs, data []map[string]any) error
+	// SetCache(args SetCacheArgs, data []map[string]any) error
+	SetCache(args SetCacheArgs, data any) error
 	GetCache(args GetCacheArgs, dest *[]map[string]any) error
 }
 
@@ -34,15 +35,24 @@ type SetCacheArgs struct {
 	ScoreType      string
 	MemberPropName string
 	Indexes        []string
+	JobName        string
 }
 
-func NewCacheStrategy(caceType string, fallback FallbackCall, fallbackArgs []any) ICacheStrategy {
-	if caceType == "cache-aside" {
+func NewCacheStrategy(cacheType string, fallback FallbackCall, fallbackArgs []any) ICacheStrategy {
+	if cacheType == "cache-aside" {
 		return NewCacheAside(fallback, fallbackArgs)
 	}
 
-	if caceType == "read-through" {
+	if cacheType == "read-through" {
 		return NewReadThrough(fallback, fallbackArgs)
+	}
+
+	if cacheType == "write-through" {
+		return NewWriteThrough(fallback, fallbackArgs)
+	}
+
+	if cacheType == "write-behind" {
+		return NewWriteBehind(fallback, fallbackArgs)
 	}
 
 	return nil
